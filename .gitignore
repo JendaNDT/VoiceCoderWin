@@ -1,0 +1,12 @@
+# build výstupy
+bin/
+obj/
+publish/
+
+# balíčky s binárkami (patří do Releases, ne do gitu)
+*.zip
+
+# lokální soubory
+*.user
+.vs/
+.DS_Store
