@@ -862,7 +862,7 @@ namespace CodePlanner.Core
             var data = new
             {
                 nastroj = "CodePlanner",
-                verzeNastroje = "2.0.0",
+                verzeNastroje = "2.0.1",
                 projekt = p.Nazev,
                 typProjektu = p.TypProjektuKlic,
                 typProjektuNazev = VratNazevTypu(p.TypProjektuKlic),

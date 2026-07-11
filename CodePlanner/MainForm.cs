@@ -306,7 +306,7 @@ namespace CodePlanner
             };
             tool.Items.Add(tip2);
 
-            var verze = new ToolStripLabel("v2.0.0")
+            var verze = new ToolStripLabel("v2.0.1")
             {
                 Alignment = ToolStripItemAlignment.Right,
                 ForeColor = Color.Silver
@@ -1794,7 +1794,7 @@ namespace CodePlanner
         private void ObnovTitulek()
         {
             string nazev = string.IsNullOrWhiteSpace(_projekt.Nazev) ? "nový projekt" : _projekt.Nazev.Trim();
-            Text = "CodePlanner – " + nazev + (_dirty ? " *" : "") + " – v2.0.0";
+            Text = "CodePlanner – " + nazev + (_dirty ? " *" : "") + " – v2.0.1";
         }
 
         private void Stav(string text) => lblStav.Text = text;

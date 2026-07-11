@@ -30,9 +30,11 @@ namespace CodePlanner
         {
             using (var pd = new PrintDocument())
             {
-                // Vybereme PDF tiskárnu
-                string tiskarna = PrinterSettings.InstalledPrinters.Cast<string>()
-                    .FirstOrDefault(p => p.Contains("Print to PDF") || p.Contains("PDF"));
+                // Vybereme PDF tiskárnu (preferujeme přesně Microsoft Print to PDF)
+                var tiskarny = PrinterSettings.InstalledPrinters.Cast<string>().ToList();
+                string tiskarna = tiskarny.FirstOrDefault(p => string.Equals(p, "Microsoft Print to PDF", StringComparison.OrdinalIgnoreCase))
+                               ?? tiskarny.FirstOrDefault(p => p.Contains("Print to PDF"))
+                               ?? tiskarny.FirstOrDefault(p => p.Contains("PDF"));
                 if (tiskarna != null)
                 {
                     pd.PrinterSettings.PrinterName = tiskarna;
