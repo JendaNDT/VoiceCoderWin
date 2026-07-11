@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CodePlanner.Core
@@ -218,7 +219,23 @@ namespace CodePlanner.Core
     /// </summary>
     public static class GeminiService
     {
-        private static readonly HttpClient Client = new HttpClient();
+        private static readonly HttpClient Client;
+
+        static GeminiService()
+        {
+            Client = new HttpClient();
+            Client.Timeout = TimeSpan.FromSeconds(30);
+        }
+
+        private static string CleanJson(string rawJson)
+        {
+            if (string.IsNullOrWhiteSpace(rawJson)) return "{}";
+            string clean = rawJson.Trim();
+            if (clean.StartsWith("```json")) clean = clean.Substring(7);
+            else if (clean.StartsWith("```")) clean = clean.Substring(3);
+            if (clean.EndsWith("```")) clean = clean.Substring(0, clean.Length - 3);
+            return clean.Trim();
+        }
 
         public static string SestavPrompt(string napad, string typProjektuKlic, string referencniText = null, bool maMockup = false)
         {
@@ -298,7 +315,7 @@ namespace CodePlanner.Core
             return sb.ToString();
         }
 
-        public static async Task<GeminiDynamickyVysledek> AnalyzujNapadAsync(string apiKey, string model, string napad, string typProjektuKlic, string referencniText = null, string mockupBase64 = null, string mockupMime = null)
+        public static async Task<GeminiDynamickyVysledek> AnalyzujNapadAsync(string apiKey, string model, string napad, string typProjektuKlic, string referencniText = null, string mockupBase64 = null, string mockupMime = null, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -343,7 +360,7 @@ namespace CodePlanner.Core
             string requestJson = JsonSerializer.Serialize(requestBody);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var response = await Client.PostAsync(url, requestContent);
+            var response = await Client.PostAsync(url, requestContent, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 string errContent = "";
@@ -364,16 +381,16 @@ namespace CodePlanner.Core
                 !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
                 throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
 
-            string textResponse = parts[0].GetProperty("text").GetString();
+            var firstPart = parts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
+
+            string textResponse = textProp.GetString();
             if (string.IsNullOrWhiteSpace(textResponse))
                 throw new Exception("Odpověď z Gemini API je prázdná.");
 
             // Vyčištění případného markdownu, pokud by ho model přesto vrátil
-            string cleanText = textResponse.Trim();
-            if (cleanText.StartsWith("```json")) cleanText = cleanText.Substring(7);
-            else if (cleanText.StartsWith("```")) cleanText = cleanText.Substring(3);
-            if (cleanText.EndsWith("```")) cleanText = cleanText.Substring(0, cleanText.Length - 3);
-            cleanText = cleanText.Trim();
+            string cleanText = CleanJson(textResponse);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiDynamickyVysledek>(cleanText, opt);
@@ -387,9 +404,9 @@ namespace CodePlanner.Core
         public static string SestavPrompt(string napad, TypProjektu typ, string referencniText = null)
             => SestavPrompt(napad, typ.ToString(), referencniText);
 
-        public static async Task<GeminiAnalizaVysledek> AnalyzujNapadAsync(string apiKey, string model, string napad, TypProjektu typ, string referencniText = null)
+        public static async Task<GeminiAnalizaVysledek> AnalyzujNapadAsync(string apiKey, string model, string napad, TypProjektu typ, string referencniText = null, CancellationToken cancellationToken = default)
         {
-            var dyn = await AnalyzujNapadAsync(apiKey, model, napad, typ.ToString(), referencniText);
+            var dyn = await AnalyzujNapadAsync(apiKey, model, napad, typ.ToString(), referencniText, null, null, cancellationToken);
             var res = new GeminiAnalizaVysledek
             {
                 Nazev = dyn.Nazev,
@@ -403,7 +420,7 @@ namespace CodePlanner.Core
             return res;
         }
 
-        public static async Task<string> PrepisAudioAsync(string apiKey, string model, string cestaWav)
+        public static async Task<string> PrepisAudioAsync(string apiKey, string model, string cestaWav, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -444,7 +461,7 @@ namespace CodePlanner.Core
             string requestJson = JsonSerializer.Serialize(requestBody);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var response = await Client.PostAsync(url, requestContent);
+            var response = await Client.PostAsync(url, requestContent, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 string errContent = "";
@@ -464,11 +481,15 @@ namespace CodePlanner.Core
                 !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
                 throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
 
-            string textResponse = parts[0].GetProperty("text").GetString();
+            var firstPart = parts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                return "";
+
+            string textResponse = textProp.GetString();
             return textResponse?.Trim() ?? "";
         }
 
-        public static async Task<List<Nalez>> AnalyzujKonzistenciAsync(string apiKey, string model, SpecProjekt projekt)
+        public static async Task<List<Nalez>> AnalyzujKonzistenciAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -520,7 +541,7 @@ namespace CodePlanner.Core
             string requestJson = JsonSerializer.Serialize(requestBody);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var response = await Client.PostAsync(url, requestContent);
+            var response = await Client.PostAsync(url, requestContent, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 string errContent = "";
@@ -536,14 +557,17 @@ namespace CodePlanner.Core
                 throw new Exception("V odpovědi Gemini API chybí kandidáti.");
 
             var firstCandidate = candidates[0];
-            var partsElement = firstCandidate.GetProperty("content").GetProperty("parts");
-            string textResponseRaw = partsElement[0].GetProperty("text").GetString();
+            if (!firstCandidate.TryGetProperty("content", out var content) ||
+                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
+                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
 
-            string cleanText = textResponseRaw.Trim();
-            if (cleanText.StartsWith("```json")) cleanText = cleanText.Substring(7);
-            else if (cleanText.StartsWith("```")) cleanText = cleanText.Substring(3);
-            if (cleanText.EndsWith("```")) cleanText = cleanText.Substring(0, cleanText.Length - 3);
-            cleanText = cleanText.Trim();
+            var firstPart = parts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
+
+            string textResponseRaw = textProp.GetString();
+
+            string cleanText = CleanJson(textResponseRaw);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiKonzistenceVysledek>(cleanText, opt);
@@ -565,7 +589,7 @@ namespace CodePlanner.Core
             return nalezy;
         }
 
-        public static async Task<List<UserStory>> GenerujUserStoriesAsync(string apiKey, string model, SpecProjekt projekt)
+        public static async Task<List<UserStory>> GenerujUserStoriesAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -597,7 +621,7 @@ namespace CodePlanner.Core
             sb.AppendLine("      \"priorita\": \"Vysoká\"");
             sb.AppendLine("    }");
             sb.AppendLine("  ]");
-            sb.AppendLine("{0}");
+            sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je kompletní specifikace projektu:");
             sb.AppendLine(SpecSluzba.RenderMarkdown(projekt));
@@ -610,7 +634,7 @@ namespace CodePlanner.Core
                     {
                         parts = new[]
                         {
-                            new { text = sb.ToString().Replace("{0}", "}") }
+                            new { text = sb.ToString() }
                         }
                     }
                 },
@@ -623,7 +647,7 @@ namespace CodePlanner.Core
             string requestJson = JsonSerializer.Serialize(requestBody);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var response = await Client.PostAsync(url, requestContent);
+            var response = await Client.PostAsync(url, requestContent, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 string errContent = "";
@@ -639,14 +663,17 @@ namespace CodePlanner.Core
                 throw new Exception("V odpovědi Gemini API chybí kandidáti.");
 
             var firstCandidate = candidates[0];
-            var partsElement = firstCandidate.GetProperty("content").GetProperty("parts");
-            string textResponseRaw = partsElement[0].GetProperty("text").GetString();
+            if (!firstCandidate.TryGetProperty("content", out var content) ||
+                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
+                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
 
-            string cleanText = textResponseRaw.Trim();
-            if (cleanText.StartsWith("```json")) cleanText = cleanText.Substring(7);
-            else if (cleanText.StartsWith("```")) cleanText = cleanText.Substring(3);
-            if (cleanText.EndsWith("```")) cleanText = cleanText.Substring(0, cleanText.Length - 3);
-            cleanText = cleanText.Trim();
+            var firstPart = parts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
+
+            string textResponseRaw = textProp.GetString();
+
+            string cleanText = CleanJson(textResponseRaw);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiUserStoriesVysledek>(cleanText, opt);
@@ -670,7 +697,7 @@ namespace CodePlanner.Core
             return stories;
         }
 
-        public static async Task<string> PosliChatZpravuAsync(string apiKey, string model, SpecProjekt projekt, List<ChatMessage> novyChatLog)
+        public static async Task<string> PosliChatZpravuAsync(string apiKey, string model, SpecProjekt projekt, List<ChatMessage> novyChatLog, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -728,7 +755,7 @@ namespace CodePlanner.Core
             string requestJson = JsonSerializer.Serialize(requestBody);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var response = await Client.PostAsync(url, requestContent);
+            var response = await Client.PostAsync(url, requestContent, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 string errContent = "";
@@ -744,13 +771,20 @@ namespace CodePlanner.Core
                 throw new Exception("V odpovědi Gemini API chybí kandidáti.");
 
             var firstCandidate = candidates[0];
-            var partsElement = firstCandidate.GetProperty("content").GetProperty("parts");
-            string textResponse = partsElement[0].GetProperty("text").GetString();
+            if (!firstCandidate.TryGetProperty("content", out var content) ||
+                !content.TryGetProperty("parts", out var resParts) || resParts.GetArrayLength() == 0)
+                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
+
+            var firstPart = resParts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                return "";
+
+            string textResponse = textProp.GetString();
 
             return textResponse?.Trim() ?? "";
         }
 
-        public static async Task<ProjektMetriky> GenerujMetrikyAsync(string apiKey, string model, SpecProjekt projekt)
+        public static async Task<ProjektMetriky> GenerujMetrikyAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -806,7 +840,7 @@ namespace CodePlanner.Core
             string requestJson = JsonSerializer.Serialize(requestBody);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var response = await Client.PostAsync(url, requestContent);
+            var response = await Client.PostAsync(url, requestContent, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 string errContent = "";
@@ -822,19 +856,17 @@ namespace CodePlanner.Core
                 throw new Exception("V odpovědi Gemini API chybí kandidáti.");
 
             var firstCandidate = candidates[0];
-            var partsElement = firstCandidate.GetProperty("content").GetProperty("parts");
-            string textResponse = partsElement[0].GetProperty("text").GetString();
+            if (!firstCandidate.TryGetProperty("content", out var content) ||
+                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
+                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
 
-            string cleanText = textResponse?.Trim() ?? "{}";
-            if (cleanText.StartsWith("```"))
-            {
-                int firstNewLine = cleanText.IndexOf('\n');
-                int lastBackticks = cleanText.LastIndexOf("```");
-                if (firstNewLine != -1 && lastBackticks != -1 && lastBackticks > firstNewLine)
-                {
-                    cleanText = cleanText.Substring(firstNewLine, lastBackticks - firstNewLine).Trim();
-                }
-            }
+            var firstPart = parts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
+
+            string textResponse = textProp.GetString();
+
+            string cleanText = CleanJson(textResponse);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiMetrikyVysledek>(cleanText, opt);

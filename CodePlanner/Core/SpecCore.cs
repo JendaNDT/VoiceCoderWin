@@ -68,9 +68,9 @@ namespace CodePlanner.Core
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Tichý fallback
+                System.Diagnostics.Debug.WriteLine($"Chyba při načítání custom šablon: {ex.Message}");
             }
         }
     }
@@ -671,7 +671,7 @@ namespace CodePlanner.Core
 
         // ---------- rendering ----------
 
-        private static string Datum(DateTime d) => d.ToString("d. M. yyyy H:mm");
+        private static string Datum(DateTime d) => d.ToString("d'.' M'.' yyyy H':'mm");
 
         private static string Zkrat(string s, int max)
         {
@@ -869,8 +869,8 @@ namespace CodePlanner.Core
             sb.AppendLine("        .badge-prio-high { background-color: var(--prio-high); }");
             sb.AppendLine("        .badge-prio-med { background-color: var(--prio-med); color: #000; }");
             sb.AppendLine("        .badge-prio-low { background-color: var(--prio-low); }");
-            sb.AppendLine("        .badge-předpoklad { background-color: #e2e8f0; color: #475569; }");
-            sb.AppendLine("        [data-theme=\"dark\"] .badge-předpoklad { background-color: #334155; color: #cbd5e1; }");
+            sb.AppendLine("        .badge-predpoklad { background-color: #e2e8f0; color: #475569; }");
+            sb.AppendLine("        [data-theme=\"dark\"] .badge-predpoklad { background-color: #334155; color: #cbd5e1; }");
             sb.AppendLine("        .metric-cards-container { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }");
             sb.AppendLine("        .metric-mini-card { background-color: var(--bg-page); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }");
             sb.AppendLine("        .metric-mini-label { font-size: 0.75rem; font-weight: 700; color: var(--text-light); text-transform: uppercase; margin-bottom: 4px; }");
@@ -930,7 +930,7 @@ namespace CodePlanner.Core
                 foreach (var ot in odpovezene)
                 {
                     var odp = OdpovedNa(p, ot.Id);
-                    string predpokladBadge = odp.JePredpoklad ? "<span class=\"badge badge-předpoklad\">Předpoklad</span>" : "";
+                    string predpokladBadge = odp.JePredpoklad ? "<span class=\"badge badge-predpoklad\">Předpoklad</span>" : "";
                     sb.AppendLine("                    <div class=\"spec-item\">");
                     sb.AppendLine($"                        <div class=\"spec-question\">{System.Net.WebUtility.HtmlEncode(ot.GetText(p.TypProjektuKlic))}{predpokladBadge}</div>");
                     sb.AppendLine($"                        <div class=\"spec-answer\">{System.Net.WebUtility.HtmlEncode(odp.Text)}</div>");
@@ -1031,13 +1031,42 @@ namespace CodePlanner.Core
             sb.AppendLine();
             sb.AppendLine("        function filterContent() {");
             sb.AppendLine("            const query = document.getElementById('searchInput').value.toLowerCase();");
-            sb.AppendLine("            const sections = document.querySelectorAll('.filterable-section');");
-            sb.AppendLine("            sections.forEach(section => {");
-            sb.AppendLine("                const text = section.innerText.toLowerCase();");
-            sb.AppendLine("                if (text.includes(query)) {");
-            sb.AppendLine("                    section.style.display = 'block';");
+            sb.AppendLine("            const cards = document.querySelectorAll('.filterable-section');");
+            sb.AppendLine("            cards.forEach(card => {");
+            sb.AppendLine("                let cardVisible = false;");
+            sb.AppendLine("                const specItems = card.querySelectorAll('.spec-item');");
+            sb.AppendLine("                if (specItems.length > 0) {");
+            sb.AppendLine("                    specItems.forEach(item => {");
+            sb.AppendLine("                        const itemText = item.innerText.toLowerCase();");
+            sb.AppendLine("                        if (itemText.includes(query)) {");
+            sb.AppendLine("                            item.style.display = 'block';");
+            sb.AppendLine("                            cardVisible = true;");
+            sb.AppendLine("                        } else {");
+            sb.AppendLine("                            item.style.display = 'none';");
+            sb.AppendLine("                        }");
+            sb.AppendLine("                    });");
             sb.AppendLine("                } else {");
-            sb.AppendLine("                    section.style.display = 'none';");
+            sb.AppendLine("                    const cardText = card.innerText.toLowerCase();");
+            sb.AppendLine("                    if (cardText.includes(query)) {");
+            sb.AppendLine("                        cardVisible = true;");
+            sb.AppendLine("                    }");
+            sb.AppendLine("                }");
+            sb.AppendLine("                const backlogItems = card.querySelectorAll('.backlog-item');");
+            sb.AppendLine("                if (backlogItems.length > 0) {");
+            sb.AppendLine("                    backlogItems.forEach(item => {");
+            sb.AppendLine("                        const itemText = item.innerText.toLowerCase();");
+            sb.AppendLine("                        if (itemText.includes(query)) {");
+            sb.AppendLine("                            item.style.display = 'flex';");
+            sb.AppendLine("                            cardVisible = true;");
+            sb.AppendLine("                        } else {");
+            sb.AppendLine("                            item.style.display = 'none';");
+            sb.AppendLine("                        }");
+            sb.AppendLine("                    });");
+            sb.AppendLine("                }");
+            sb.AppendLine("                if (cardVisible || query === '') {");
+            sb.AppendLine("                    card.style.display = 'block';");
+            sb.AppendLine("                } else {");
+            sb.AppendLine("                    card.style.display = 'none';");
             sb.AppendLine("                }");
             sb.AppendLine("            });");
             sb.AppendLine("        }");

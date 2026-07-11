@@ -31,6 +31,8 @@ namespace CodePlanner
             _nastaveni = GeminiNastaveni.Nacti();
 
             ClientSize = new Size(460, 240);
+            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
+            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -155,8 +157,8 @@ namespace CodePlanner
             pnlMain.Controls.Add(cbModel, 0, 4);
 
             var wrapper = new Panel { Dock = DockStyle.Fill };
-            wrapper.Controls.Add(pnlMain);
-            wrapper.Controls.Add(pnlTlacitka);
+            wrapper.Controls.Add(pnlTlacitka); // Bottom dock first
+            wrapper.Controls.Add(pnlMain);      // Fill dock second
 
             Controls.Add(wrapper);
 
