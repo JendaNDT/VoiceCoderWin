@@ -234,6 +234,59 @@ namespace CodePlanner.Core
             return clean.Trim();
         }
 
+        /// <summary>Ořízne příliš dlouhý text pro prompt na daný počet znaků a doplní poznámku o zkrácení.</summary>
+        public static string OrezText(string text, int maxZnaku = 100_000)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxZnaku) return text;
+            return text.Substring(0, maxZnaku) + Environment.NewLine + "[…zkráceno]";
+        }
+
+        /// <summary>Cesta k souboru s poslední surovou AI odpovědí – ukládá se sem při chybě parsování pro diagnostiku.</summary>
+        public static string CestaPosledniAiOdpovedi
+            => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CodePlanner", "posledni_ai_odpoved.txt");
+
+        private static void UlozSurovouAiOdpoved(string surovaOdpoved)
+        {
+            try
+            {
+                string cesta = CestaPosledniAiOdpovedi;
+                string slozka = Path.GetDirectoryName(cesta);
+                if (!string.IsNullOrEmpty(slozka)) Directory.CreateDirectory(slozka);
+                File.WriteAllText(cesta, surovaOdpoved ?? "", Encoding.UTF8);
+            }
+            catch
+            {
+                // Diagnostický zápis nesmí shodit hlavní operaci.
+            }
+        }
+
+        private static readonly JsonSerializerOptions AiJsonOpt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        /// <summary>Deserializace JSON odpovědi od AI. Při nevalidním JSONu uloží surovou odpověď
+        /// do %AppData%\CodePlanner\posledni_ai_odpoved.txt a vyhodí srozumitelnou výjimku (inner = JsonException).</summary>
+        private static T DeserializujAiOdpoved<T>(string surovaOdpoved) where T : class
+        {
+            string cleanText = CleanJson(surovaOdpoved);
+            T vysledek;
+            try
+            {
+                vysledek = JsonSerializer.Deserialize<T>(cleanText, AiJsonOpt);
+            }
+            catch (JsonException ex)
+            {
+                UlozSurovouAiOdpoved(surovaOdpoved);
+                throw new Exception("AI vrátila odpověď v neočekávaném formátu. Zkuste akci zopakovat.", ex);
+            }
+
+            if (vysledek == null)
+            {
+                UlozSurovouAiOdpoved(surovaOdpoved);
+                throw new Exception("AI vrátila odpověď v neočekávaném formátu. Zkuste akci zopakovat.");
+            }
+
+            return vysledek;
+        }
+
         public static async Task TestPripojeniAsync(string apiKey, string model)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
@@ -256,11 +309,49 @@ namespace CodePlanner.Core
             await PosliGeminiRequestAsync(apiKey, model, requestBody, default);
         }
 
+        /// <summary>Interní výjimka nesoucí HTTP status kód – slouží k rozhodnutí, zda má smysl pokus opakovat.</summary>
+        private sealed class GeminiApiException : Exception
+        {
+            public int StatusCode { get; }
+
+            public GeminiApiException(string message, int statusCode) : base(message)
+            {
+                StatusCode = statusCode;
+            }
+        }
+
+        /// <summary>Pauzy mezi automatickými opakováními při dočasné chybě (max. 2 opakování: 2 s a 5 s).</summary>
+        private static readonly TimeSpan[] PauzyMeziPokusy = { TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
+
+        /// <summary>Dočasné chyby, u kterých má smysl automaticky opakovat: HTTP 429/500/502/503, timeout a síťová chyba.</summary>
+        private static bool JeDocasnaChyba(Exception ex)
+        {
+            if (ex is GeminiApiException api)
+                return api.StatusCode == 429 || api.StatusCode == 500 || api.StatusCode == 502 || api.StatusCode == 503;
+            return ex is TimeoutException || ex is HttpRequestException;
+        }
+
         private static async Task<string> PosliGeminiRequestAsync(string apiKey, string model, object requestBody, CancellationToken cancellationToken)
         {
             string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
             string requestJson = JsonSerializer.Serialize(requestBody);
 
+            for (int pokus = 0; ; pokus++)
+            {
+                try
+                {
+                    return await PosliGeminiRequestJednouAsync(url, apiKey, requestJson, cancellationToken);
+                }
+                catch (Exception ex) when (pokus < PauzyMeziPokusy.Length && JeDocasnaChyba(ex) && !cancellationToken.IsCancellationRequested)
+                {
+                    // Dočasná chyba – počkáme a zkusíme to znovu. Task.Delay s tokenem se při zrušení okamžitě ukončí.
+                    await Task.Delay(PauzyMeziPokusy[pokus], cancellationToken);
+                }
+            }
+        }
+
+        private static async Task<string> PosliGeminiRequestJednouAsync(string url, string apiKey, string requestJson, CancellationToken cancellationToken)
+        {
             using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
             requestMessage.Headers.Add("x-goog-api-key", apiKey);
             requestMessage.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
@@ -310,7 +401,7 @@ namespace CodePlanner.Core
                         friendlyMsg = $"Gemini API vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}).";
                         if (!string.IsNullOrEmpty(errContent)) friendlyMsg += $" Detail: {errContent}";
                     }
-                    throw new Exception(friendlyMsg);
+                    throw new GeminiApiException(friendlyMsg, (int)response.StatusCode);
                 }
 
                 string responseJson = await response.Content.ReadAsStringAsync();
@@ -407,7 +498,7 @@ namespace CodePlanner.Core
             {
                 sb.AppendLine();
                 sb.AppendLine("Uživatel přiložil také následující referenční podklady k projektu. Použij je k přesnějšímu nastavení otázek a odpovědí:");
-                sb.AppendLine(referencniText);
+                sb.AppendLine(OrezText(referencniText));
             }
 
             if (maMockup)
@@ -463,14 +554,7 @@ namespace CodePlanner.Core
             if (string.IsNullOrWhiteSpace(textResponse))
                 throw new Exception("Odpověď z Gemini API je prázdná.");
 
-            string cleanText = CleanJson(textResponse);
-            var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var vysledek = JsonSerializer.Deserialize<GeminiDynamickyVysledek>(cleanText, opt);
-
-            if (vysledek == null)
-                throw new Exception("Nepodařilo se parsovat JSON výsledek z Gemini API.");
-
-            return vysledek;
+            return DeserializujAiOdpoved<GeminiDynamickyVysledek>(textResponse);
         }
 
         public static async Task<string> PrepisAudioAsync(string apiKey, string model, string cestaWav, CancellationToken cancellationToken = default)
@@ -540,7 +624,7 @@ namespace CodePlanner.Core
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je kompletní specifikace projektu:");
-            sb.AppendLine(SpecSluzba.RenderMarkdown(projekt));
+            sb.AppendLine(OrezText(SpecSluzba.RenderMarkdown(projekt)));
 
             var requestBody = new
             {
@@ -561,13 +645,10 @@ namespace CodePlanner.Core
             };
 
             string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
-            string cleanText = CleanJson(textResponse);
-
-            var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var vysledek = JsonSerializer.Deserialize<GeminiKonzistenceVysledek>(cleanText, opt);
+            var vysledek = DeserializujAiOdpoved<GeminiKonzistenceVysledek>(textResponse);
 
             var nalezy = new List<Nalez>();
-            if (vysledek?.Nalezy != null)
+            if (vysledek.Nalezy != null)
             {
                 foreach (var n in vysledek.Nalezy)
                 {
@@ -616,7 +697,7 @@ namespace CodePlanner.Core
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je kompletní specifikace projektu:");
-            sb.AppendLine(SpecSluzba.RenderMarkdown(projekt));
+            sb.AppendLine(OrezText(SpecSluzba.RenderMarkdown(projekt)));
 
             var requestBody = new
             {
@@ -637,13 +718,10 @@ namespace CodePlanner.Core
             };
 
             string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
-            string cleanText = CleanJson(textResponse);
-
-            var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var vysledek = JsonSerializer.Deserialize<GeminiUserStoriesVysledek>(cleanText, opt);
+            var vysledek = DeserializujAiOdpoved<GeminiUserStoriesVysledek>(textResponse);
 
             var stories = new List<UserStory>();
-            if (vysledek?.Stories != null)
+            if (vysledek.Stories != null)
             {
                 foreach (var s in vysledek.Stories)
                 {
@@ -666,22 +744,33 @@ namespace CodePlanner.Core
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
 
-            string specMarkdown = SpecSluzba.RenderMarkdown(projekt);
+            string specMarkdown = OrezText(SpecSluzba.RenderMarkdown(projekt));
             string systemPrompt = "Jsi zkušený softwarový architekt, agilní kouč a seniorní vývojář. Odpovídáš na dotazy ohledně navrhovaného projektu.\n\n" +
                                  "Zde je kompletní specifikace projektu, která je tvým jediným zdrojem pravdy o cílech a parametrech systému. Všechny své odpovědi přizpůsob tomuto kontextu:\n\n" +
                                  specMarkdown + "\n\n" +
                                  "Odpovídej přímo, konstruktivně a srozumitelně v češtině. Pomáhej s architekturou, databázemi, návrhem rozhraní, kódem nebo testováním.";
 
+            var vsechnyZpravy = novyChatLog ?? new List<ChatMessage>();
+
+            // Posíláme jen posledních 20 zpráv historie – starší kontext drží specifikace v system promptu.
+            var zpravy = vsechnyZpravy.Count > 20
+                ? vsechnyZpravy.Skip(vsechnyZpravy.Count - 20).ToList()
+                : vsechnyZpravy;
+
+            // Mockup přikládáme jen k úplně první zprávě konverzace (historie před aktuální zprávou je prázdná),
+            // aby se obrázek neposílal znovu při každém dalším volání.
+            bool prilozitMockup = vsechnyZpravy.Count == 1 && !string.IsNullOrWhiteSpace(projekt.MockupBase64);
+
             var turnsList = new List<object>();
-            for (int i = 0; i < novyChatLog.Count; i++)
+            for (int i = 0; i < zpravy.Count; i++)
             {
-                var msg = novyChatLog[i];
+                var msg = zpravy[i];
                 var parts = new List<object>
                 {
                     new { text = msg.Text }
                 };
 
-                if (i == 0 && string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(projekt.MockupBase64))
+                if (prilozitMockup && i == 0 && string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
                 {
                     string mime = (projekt.MockupNazev != null && (projekt.MockupNazev.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || projekt.MockupNazev.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
                     parts.Add(new
@@ -737,7 +826,7 @@ namespace CodePlanner.Core
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je aktuální specifikace projektu:");
-            sb.AppendLine(SpecSluzba.RenderMarkdown(projekt));
+            sb.AppendLine(OrezText(SpecSluzba.RenderMarkdown(projekt)));
 
             if (projekt.UserStories != null && projekt.UserStories.Count > 0)
             {
@@ -768,20 +857,17 @@ namespace CodePlanner.Core
             };
 
             string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
-            string cleanText = CleanJson(textResponse);
-
-            var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var vysledek = JsonSerializer.Deserialize<GeminiMetrikyVysledek>(cleanText, opt);
+            var vysledek = DeserializujAiOdpoved<GeminiMetrikyVysledek>(textResponse);
 
             return new ProjektMetriky
             {
-                CasovyOdhadMin = vysledek?.CasovyOdhadMin ?? "",
-                CasovyOdhadMax = vysledek?.CasovyOdhadMax ?? "",
-                Komplexita = vysledek?.Komplexita ?? "Střední",
-                SlozeniTymu = vysledek?.SlozeniTymu ?? "",
-                DoporucenyRozpocet = vysledek?.DoporucenyRozpocet ?? "",
-                TechnickyRozbor = vysledek?.TechnickyRozbor ?? "",
-                RizikaMetriky = vysledek?.RizikaMetriky ?? new List<string>(),
+                CasovyOdhadMin = vysledek.CasovyOdhadMin ?? "",
+                CasovyOdhadMax = vysledek.CasovyOdhadMax ?? "",
+                Komplexita = vysledek.Komplexita ?? "Střední",
+                SlozeniTymu = vysledek.SlozeniTymu ?? "",
+                DoporucenyRozpocet = vysledek.DoporucenyRozpocet ?? "",
+                TechnickyRozbor = vysledek.TechnickyRozbor ?? "",
+                RizikaMetriky = vysledek.RizikaMetriky ?? new List<string>(),
                 CasVypoctu = DateTime.Now
             };
         }
@@ -812,3 +898,4 @@ namespace CodePlanner.Core
         public List<string> RizikaMetriky { get; set; } = new List<string>();
     }
 }
+// konec souboru

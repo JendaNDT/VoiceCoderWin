@@ -34,6 +34,24 @@ namespace CodePlanner
         private ToolStrip toolBar;        // Uchovává instanci toolbar pro snadné vypnutí
         private bool _chatBusy = false;   // Flag proti vícenásobnému odeslání chatu
         private CancellationTokenSource _ctsAi = null;
+        private CancellationTokenSource _ctsChat = null;                 // storno běžící chatové zprávy
+        private System.Windows.Forms.Timer _autosaveTimer;               // automatická záloha rozdělané práce (2 min)
+        private System.Windows.Forms.Timer _prubehTimer;                 // ukazuje uplynulý čas běžící AI operace (1 s)
+        private System.Windows.Forms.Timer _diktovaniLimitTimer;         // auto-stop diktování po 3 minutách
+        private DateTime _casStartuAiOperace;                            // start běžící AI operace (pro průběžný čas)
+        private bool _snapshotAnalyzyExistuje = false;                   // v této session vznikla záloha před AI analýzou
+        private Button _tlacitkoDiktovaniAktivni = null;                 // které mikrofonní tlačítko právě nahrává
+        private ToolStripButton btnVratitAnalyzu;                        // „↩ Vrátit analýzu“ v toolbaru
+        private Label lblApiBanner;                                      // banner „chybí API klíč“ nahoře
+
+        private const string PlaceholderChatu = "Např. ‚Co v zadání ještě chybí?‘ nebo ‚Co bude nejtěžší část?‘";
+        private const string TipDiktovani = "Podržte a mluvte, nebo klikněte pro zapnutí/vypnutí. Přepis zajišťuje AI (Gemini). Tip: Win+H je vestavěné diktování Windows zdarma.";
+        private const string RadaMikrofon = "Zkontrolujte mikrofon v Nastavení Windows → Soukromí → Mikrofon.";
+
+        private static string SlozkaDatAplikace
+            => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CodePlanner");
+        private static string CestaAutosave => Path.Combine(SlozkaDatAplikace, "autosave.vcbrief");
+        private static string CestaZalohyPredAnalyzou => Path.Combine(SlozkaDatAplikace, "pred_analyzou.vcbrief");
 
         // stav otázek pro vykreslení seznamu (plní ObnovSeznamOtazek)
         private readonly List<char> _stavyOtazek = new List<char>();     // '○' / '≈' / '✔'
@@ -88,6 +106,16 @@ namespace CodePlanner
             _debounceTimer.Interval = 500;
             _debounceTimer.Tick += DebounceTimer_Tick;
 
+            _autosaveTimer = new System.Windows.Forms.Timer { Interval = 120_000 };
+            _autosaveTimer.Tick += AutosaveTimer_Tick;
+            _autosaveTimer.Start();
+
+            _prubehTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _prubehTimer.Tick += PrubehTimer_Tick;
+
+            _diktovaniLimitTimer = new System.Windows.Forms.Timer { Interval = 180_000 };
+            _diktovaniLimitTimer.Tick += DiktovaniLimitTimer_Tick;
+
             _chatFontItalic = new Font("Segoe UI", 10f, FontStyle.Italic);
             _chatFontBold = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
             _chatFontRegular = new Font("Segoe UI", 9.5f, FontStyle.Regular);
@@ -120,12 +148,27 @@ namespace CodePlanner
             toolBar = PostavToolbar();
             var status = PostavStatusBar();
 
+            lblApiBanner = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 28,
+                Text = "🔑 AI funkce vyžadují bezplatný klíč Gemini – klikněte pro nastavení.",
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(10, 0, 0, 0),
+                BackColor = Color.FromArgb(255, 248, 214),
+                ForeColor = Color.FromArgb(133, 100, 4),
+                Cursor = Cursors.Hand,
+                Visible = false
+            };
+            lblApiBanner.Click += (s, e) => OtevritNastaveni();
+
             // pořadí přidání řídí docking: později přidané se dokují dřív
-            Controls.Add(split);       // Fill
-            Controls.Add(oddelovac);   // Bottom (nad logem, umožní měnit jeho výšku)
-            Controls.Add(logBox);      // Bottom
-            Controls.Add(toolBar);     // Top
-            Controls.Add(status);      // Bottom (pod logem)
+            Controls.Add(split);          // Fill
+            Controls.Add(oddelovac);      // Bottom (nad logem, umožní měnit jeho výšku)
+            Controls.Add(logBox);         // Bottom
+            Controls.Add(lblApiBanner);   // Top (pod toolbarem)
+            Controls.Add(toolBar);        // Top
+            Controls.Add(status);         // Bottom (pod logem)
 
             FormClosing += (s, e) =>
             {
@@ -135,6 +178,7 @@ namespace CodePlanner
                 }
                 else if (!e.Cancel)
                 {
+                    if (!_dirty) SmazAutosave();   // čisté zavření – automatická záloha už není potřeba
                     _chatFontItalic?.Dispose();
                     _chatFontBold?.Dispose();
                     _chatFontRegular?.Dispose();
@@ -143,6 +187,8 @@ namespace CodePlanner
 
             NovyProjekt(prvniSpusteni: true);
             ObnovNedavneMenu();
+            ObnovApiBanner();
+            Shown += (s, e) => NabidniObnovuAutosave();
         }
 
         // ---------------- klávesové zkratky ----------------
@@ -151,7 +197,20 @@ namespace CodePlanner
         {
             if (_isBusy || _chatBusy)
             {
-                if (keyData != Keys.Escape) return true;
+                if (keyData == Keys.Escape)
+                {
+                    // Esc zruší běžící AI operaci (analýzu i chat)
+                    _ctsAi?.Cancel();
+                    _ctsChat?.Cancel();
+                    return true;
+                }
+                if (keyData == (Keys.Control | Keys.S))
+                {
+                    // uložit lze kdykoli, i během práce AI
+                    UlozitProjekt();
+                    return true;
+                }
+                return true;   // ostatní zkratky během AI operace blokujeme
             }
             switch (keyData)
             {
@@ -174,7 +233,8 @@ namespace CodePlanner
                     ExportujPdf();
                     return true;
                 case Keys.Control | Keys.Enter:
-                    if (txtOdpoved.Focused) { UlozOdpoved(); return true; }
+                    // funguje i mimo pole odpovědi, pokud je vybraná otázka (chat má vlastní Enter)
+                    if (!txtChatInput.Focused && VybranaOtazka() != null) { UlozOdpoved(); return true; }
                     break;
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -217,17 +277,30 @@ namespace CodePlanner
 
             tool.Items.Add(Tlacitko("💾 Uložit", "Uložit projekt (Ctrl+S)", (s, e) => UlozitProjekt()));
             tool.Items.Add(new ToolStripSeparator());
-            tool.Items.Add(Tlacitko("⬇ Markdown…", "Export specifikace pro člověka (Ctrl+M)", (s, e) => Export(true)));
-            tool.Items.Add(Tlacitko("⬇ JSON…", "Export specifikace pro kódovacího agenta (Ctrl+J)", (s, e) => Export(false)));
+            tool.Items.Add(Tlacitko("⬇ Markdown…", "Pro lidi – čitelný dokument (Ctrl+M)", (s, e) => Export(true)));
+            tool.Items.Add(Tlacitko("⬇ JSON…", "Pro AI agenta – strojová data (Ctrl+J)", (s, e) => Export(false)));
             tool.Items.Add(Tlacitko("📄 PDF…", "Export specifikace do PDF pro klienty (Ctrl+P)", (s, e) => ExportujPdf()));
             tool.Items.Add(Tlacitko("🌐 HTML Web…", "Export specifikace do interaktivního HTML webu", (s, e) => ExportujHtml()));
             tool.Items.Add(Tlacitko("💡 User Stories…", "Správa a generování uživatelských příběhů pro vývojáře", (s, e) => ZobrazUserStories()));
             tool.Items.Add(Tlacitko("📊 Metriky a Odhad…", "Projektové metriky a AI časový odhad", (s, e) => ZobrazMetriky()));
+            tool.Items.Add(Tlacitko("✔ Kontrola…", "Kontrola konzistence specifikace – rozpory a varování", (s, e) => ZobrazNalezy(true)));
+
+            btnVratitAnalyzu = new ToolStripButton("↩ Vrátit analýzu")
+            {
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                ToolTipText = "Obnoví projekt ze zálohy vytvořené před poslední AI analýzou.",
+                Padding = new Padding(4, 2, 4, 2),
+                Visible = false
+            };
+            btnVratitAnalyzu.Click += (s, e) => VratitAnalyzu();
+            tool.Items.Add(btnVratitAnalyzu);
+
             tool.Items.Add(new ToolStripSeparator());
             tool.Items.Add(Tlacitko("⚙ Nastavení AI…", "Nastavení Gemini API klíče a modelu", (s, e) => OtevritNastaveni()));
+            tool.Items.Add(Tlacitko("❓", "Nápověda – čtyři kroky práce a klávesové zkratky", (s, e) => ZobrazNapovedu()));
             tool.Items.Add(new ToolStripSeparator());
 
-            var tip2 = new ToolStripLabel("🎤 Diktování Windows: stiskni Win+H v libovolném poli")
+            var tip2 = new ToolStripLabel("🎤 Diktování: podržte tlačítko a mluvte · Win+H = vestavěné diktování Windows zdarma")
             {
                 ForeColor = SedaText
             };
@@ -255,7 +328,7 @@ namespace CodePlanner
         {
             var box = new GroupBox
             {
-                Text = "Log rozhodnutí (každá změna má čas a důvod) – výšku upravíš tažením horního okraje",
+                Text = "Log rozhodnutí (každá změna má čas a důvod) – výšku upravíte tažením horního okraje",
                 Dock = DockStyle.Bottom,
                 Height = 150,
                 Padding = new Padding(8),
@@ -375,7 +448,7 @@ namespace CodePlanner
                 Height = 28,
                 Margin = new Padding(0)
             };
-            var lblNapad = Nadpis("Nápad (piš, nebo diktuj přes Win+H)");
+            var lblNapad = Nadpis("1 · Nápad (pište, nebo diktujte)");
             btnAiAnalyza = new Button
             {
                 Text = "🤖 Analyzovat přes Gemini",
@@ -407,6 +480,7 @@ namespace CodePlanner
             btnDiktovatNapad.MouseDown += BtnDiktovat_MouseDown;
             btnDiktovatNapad.MouseUp += BtnDiktovat_MouseUp;
             btnDiktovatNapad.Click += BtnDiktovat_Click;
+            _tipReference.SetToolTip(btnDiktovatNapad, TipDiktovani);
 
             btnReferencie = new Button
             {
@@ -503,7 +577,7 @@ namespace CodePlanner
             };
 
             // TAB 1: Specifikace
-            var tabSpecPage = new TabPage("📄 Specifikace projektu");
+            var tabSpecPage = new TabPage("3 · 📄 Specifikace a exporty");
             tabSpecPage.BackColor = Color.White;
             
             var pnlSpecHeader = new Panel
@@ -601,11 +675,12 @@ namespace CodePlanner
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 2,
+                RowCount = 3,
                 BackColor = Color.White
             };
             tlpChat.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // chat history log
             tlpChat.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));   // input panel
+            tlpChat.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // hint ke klávesám
 
             rtbChatLog = new RichTextBox
             {
@@ -631,7 +706,7 @@ namespace CodePlanner
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Segoe UI", 9.5f),
-                Text = "Zeptej se na specifikaci projektu (např. 'Napiš SQL schémata', 'Navrhni refactoring')..."
+                Text = PlaceholderChatu
             };
             txtChatInput.ForeColor = Color.Gray;
 
@@ -647,7 +722,7 @@ namespace CodePlanner
             {
                 if (string.IsNullOrWhiteSpace(txtChatInput.Text))
                 {
-                    txtChatInput.Text = "Zeptej se na specifikaci projektu (např. 'Napiš SQL schémata', 'Navrhni refactoring')...";
+                    txtChatInput.Text = PlaceholderChatu;
                     txtChatInput.ForeColor = Color.Gray;
                 }
             };
@@ -700,8 +775,18 @@ namespace CodePlanner
             pnlChatInputArea.Controls.Add(txtChatInput);
             pnlChatInputArea.Controls.Add(pnlChatButtons);
 
+            var lblChatHint = new Label
+            {
+                Text = "Enter = odeslat · Shift+Enter = nový řádek",
+                AutoSize = true,
+                ForeColor = SedaText,
+                Font = new Font("Segoe UI", 8f),
+                Margin = new Padding(8, 0, 0, 4)
+            };
+
             tlpChat.Controls.Add(rtbChatLog, 0, 0);
             tlpChat.Controls.Add(pnlChatInputArea, 0, 1);
+            tlpChat.Controls.Add(lblChatHint, 0, 2);
 
             tabChatPage.Controls.Add(tlpChat);
             tabRight.TabPages.Add(tabChatPage);
@@ -720,7 +805,7 @@ namespace CodePlanner
         {
             var box = new GroupBox
             {
-                Text = "Řízené otázky (nejdřív ty s největším dopadem)",
+                Text = "2 · Otázky a odpovědi (nejdřív ty s největším dopadem)",
                 Dock = DockStyle.Fill,
                 Padding = new Padding(8),
                 ForeColor = Navy
@@ -730,10 +815,11 @@ namespace CodePlanner
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 8,
+                RowCount = 9,
                 BackColor = Color.Transparent
             };
             tlp.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // seznam otázek
+            tlp.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // mini-legenda značek
             tlp.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // otázka
             tlp.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // nápověda
             tlp.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));   // odpověď
@@ -818,7 +904,7 @@ namespace CodePlanner
 
             btnPredpoklad = new Button
             {
-                Text = "Nevím → použij předpoklad",
+                Text = "Nevím → použít předpoklad",
                 AutoSize = true,
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Navy,
@@ -831,7 +917,7 @@ namespace CodePlanner
 
             btnDiktovatOdpoved = new Button
             {
-                Text = "🎤 Diktovat (držet)",
+                Text = "🎤 Diktovat",
                 AutoSize = true,
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Navy,
@@ -843,6 +929,7 @@ namespace CodePlanner
             btnDiktovatOdpoved.MouseDown += BtnDiktovat_MouseDown;
             btnDiktovatOdpoved.MouseUp += BtnDiktovat_MouseUp;
             btnDiktovatOdpoved.Click += BtnDiktovat_Click;
+            _tipReference.SetToolTip(btnDiktovatOdpoved, TipDiktovani);
 
             tlacitka.Controls.Add(btnOdpovedet);
             tlacitka.Controls.Add(btnPredpoklad);
@@ -864,14 +951,24 @@ namespace CodePlanner
                 Margin = new Padding(0, 2, 0, 0)
             };
 
+            var lblLegenda = new Label
+            {
+                AutoSize = true,
+                Text = "✔ zodpovězeno · P předpoklad · V/S dopad vysoký/střední",
+                ForeColor = SedaText,
+                Font = new Font("Segoe UI", 8f),
+                Margin = new Padding(0, 0, 0, 4)
+            };
+
             tlp.Controls.Add(lstOtazky, 0, 0);
-            tlp.Controls.Add(lblOtazka, 0, 1);
-            tlp.Controls.Add(lblNapoveda, 0, 2);
-            tlp.Controls.Add(txtOdpoved, 0, 3);
-            tlp.Controls.Add(pnlQuickOptions, 0, 4);
-            tlp.Controls.Add(tlacitka, 0, 5);
-            tlp.Controls.Add(pnlPostup, 0, 6);
-            tlp.Controls.Add(lblPostup, 0, 7);
+            tlp.Controls.Add(lblLegenda, 0, 1);
+            tlp.Controls.Add(lblOtazka, 0, 2);
+            tlp.Controls.Add(lblNapoveda, 0, 3);
+            tlp.Controls.Add(txtOdpoved, 0, 4);
+            tlp.Controls.Add(pnlQuickOptions, 0, 5);
+            tlp.Controls.Add(tlacitka, 0, 6);
+            tlp.Controls.Add(pnlPostup, 0, 7);
+            tlp.Controls.Add(lblPostup, 0, 8);
 
             box.Controls.Add(tlp);
             return box;
@@ -1141,6 +1238,10 @@ namespace CodePlanner
             _cestaSouboru = null;
             _dirty = false;
 
+            // záloha před analýzou patřila k předchozímu projektu – tlačítko „↩ Vrátit analýzu“ skryjeme
+            _snapshotAnalyzyExistuje = false;
+            ObnovTlacitkoVratitAnalyzu();
+
             _nacitani = true;
             txtNazev.Text = "";
             txtNapad.Text = "";
@@ -1185,6 +1286,10 @@ namespace CodePlanner
                 _cestaSouboru = cesta;
                 _dirty = false;
 
+                // záloha před analýzou patřila k předchozímu projektu – tlačítko „↩ Vrátit analýzu“ skryjeme
+                _snapshotAnalyzyExistuje = false;
+                ObnovTlacitkoVratitAnalyzu();
+
                 _nacitani = true;
                 txtNazev.Text = _projekt.Nazev ?? "";
                 txtNapad.Text = _projekt.Napad ?? "";
@@ -1225,6 +1330,7 @@ namespace CodePlanner
             {
                 SpecSluzba.UlozProjekt(_projekt, _cestaSouboru);
                 _dirty = false;
+                SmazAutosave();   // po ručním uložení už automatická záloha není potřeba
                 ObnovTitulek();
                 Stav("Uloženo: " + Path.GetFileName(_cestaSouboru));
 
@@ -1244,6 +1350,8 @@ namespace CodePlanner
 
         private void Export(bool markdown)
         {
+            if (!PotvrdExportSeSouhrnem()) return;
+
             using var dlg = new SaveFileDialog
             {
                 Title = markdown ? "Export specifikace (Markdown)" : "Export specifikace (JSON)",
@@ -1257,8 +1365,18 @@ namespace CodePlanner
                 var obsah = markdown ? SpecSluzba.RenderMarkdown(_projekt) : SpecSluzba.RenderJson(_projekt);
                 File.WriteAllText(dlg.FileName, obsah, new System.Text.UTF8Encoding(true));
                 Stav("Export hotový: " + Path.GetFileName(dlg.FileName));
-                MessageBox.Show(this, "Specifikace byla exportována:\n\n" + dlg.FileName,
-                    "Export hotový", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                var res = MessageBox.Show(this,
+                    "Specifikace byla exportována:\n\n" + dlg.FileName + "\n\nChcete vytvořený soubor ihned otevřít?",
+                    "Export hotový", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (res == DialogResult.Yes)
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = dlg.FileName,
+                        UseShellExecute = true
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -1269,6 +1387,8 @@ namespace CodePlanner
 
         private void ExportujHtml()
         {
+            if (!PotvrdExportSeSouhrnem()) return;
+
             using var dlg = new SaveFileDialog
             {
                 Title = "Export specifikace (Interaktivní HTML Web)",
@@ -1284,7 +1404,7 @@ namespace CodePlanner
                 Stav("HTML export hotový: " + Path.GetFileName(dlg.FileName));
                 
                 var res = MessageBox.Show(this,
-                    "Interaktivní specifikace byla exportována do HTML.\n\nChceš vytvořený web ihned otevřít v prohlížeči?",
+                    "Interaktivní specifikace byla exportována do HTML.\n\nChcete vytvořený web ihned otevřít v prohlížeči?",
                     "Export hotový", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                 if (res == DialogResult.Yes)
                 {
@@ -1304,6 +1424,8 @@ namespace CodePlanner
 
         private void ExportujPdf()
         {
+            if (!PotvrdExportSeSouhrnem()) return;
+
             using (var dlg = new SaveFileDialog
             {
                 Title = "Exportovat specifikaci do PDF",
@@ -1327,7 +1449,7 @@ namespace CodePlanner
 
                     Stav("Export do PDF dokončen.");
                     var res = MessageBox.Show(this,
-                        "Specifikace byla úspěšně exportována do PDF.\n\nChceš vytvořený soubor ihned otevřít?",
+                        "Specifikace byla úspěšně exportována do PDF.\n\nChcete vytvořený soubor ihned otevřít?",
                         "Export dokončen", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                     if (res == DialogResult.Yes)
                     {
@@ -1377,7 +1499,7 @@ namespace CodePlanner
 
             if (string.IsNullOrWhiteSpace(txtOdpoved.Text))
             {
-                MessageBox.Show(this, "Napiš odpověď, nebo zvol „Nevím → použij předpoklad“.",
+                MessageBox.Show(this, "Napište odpověď, nebo zvolte „Nevím → použít předpoklad“.",
                     "Chybí odpověď", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -1409,7 +1531,7 @@ namespace CodePlanner
             else
             {
                 VyberOtazku(posledni);
-                Stav("Všechny otázky vyřešené – specifikaci můžeš exportovat.");
+                Stav("Všechny otázky jsou vyřešené – specifikaci můžete exportovat (krok 3).");
             }
         }
 
@@ -1442,13 +1564,15 @@ namespace CodePlanner
             var ot = VybranaOtazka();
             if (ot == null) return;
 
+            bool programoveVolani = _nacitani;   // true = jde o programovou obnovu seznamu, ne o volbu uživatele
+
             lblOtazka.Text = ot.GetText(_projekt.TypProjektuKlic);
-            lblNapoveda.Text = ot.GetNapoveda(_projekt.TypProjektuKlic) + "  (Když nevíš, předpoklad bude: „" + ot.GetVychoziPredpoklad(_projekt.TypProjektuKlic) + "“)";
+            lblNapoveda.Text = ot.GetNapoveda(_projekt.TypProjektuKlic) + "  (Když nevíte, předpoklad bude: „" + ot.GetVychoziPredpoklad(_projekt.TypProjektuKlic) + "“)";
 
             var odp = SpecSluzba.OdpovedNa(_projekt, ot.Id);
             _nacitani = true;
             txtOdpoved.Text = odp != null && !odp.JePredpoklad ? odp.Text : "";
-            _nacitani = false;
+            _nacitani = programoveVolani;
 
             foreach (Control ctrl in pnlQuickOptions.Controls)
             {
@@ -1492,6 +1616,12 @@ namespace CodePlanner
                     pnlQuickOptions.Controls.Add(btnVolba);
                 }
             }
+
+            // fokus rovnou do pole odpovědi, aby šlo hned psát (ne při programové obnově seznamu ani během AI)
+            if (!programoveVolani && !_isBusy && !_chatBusy && txtOdpoved.Enabled)
+            {
+                txtOdpoved.Focus();
+            }
         }
 
         private void ObnovVse()
@@ -1503,6 +1633,7 @@ namespace CodePlanner
             ObnovTitulek();
             ObnovTlacitkoReference();
             ObnovTlacitkoMockupu();
+            ObnovComboTypu();
             VykresliHistoriiChatu();
         }
 
@@ -1595,15 +1726,18 @@ namespace CodePlanner
             if (varovani > 0) casti.Add(Mnozne(varovani, "varování", "varování", "varování"));
 
             lblNalezy.Text = (rozpory > 0 ? "❗ " : "⚠️ ") + "Kontrola konzistence: " +
-                string.Join(" a ", casti) + " – klikni pro detail";
+                string.Join(" a ", casti) + " – klikněte pro detail";
             lblNalezy.BackColor = rozpory > 0 ? Color.FromArgb(253, 232, 232) : Color.FromArgb(255, 244, 219);
             lblNalezy.ForeColor = rozpory > 0 ? Color.FromArgb(155, 28, 28) : Color.FromArgb(146, 90, 4);
             lblNalezy.Visible = true;
         }
 
-        private void ZobrazNalezy()
+        /// <summary>Otevře okno kontroly konzistence. Z toolbaru (iKdyzPrazdne = true) se otevře
+        /// i s prázdným seznamem – uživatel tak vidí, že kontrola existuje a co hlídá.</summary>
+        private void ZobrazNalezy(bool iKdyzPrazdne = false)
         {
-            if (_nalezy.Count == 0) return;
+            if (iKdyzPrazdne) ObnovNalezy();   // ať pracujeme s aktuálním stavem
+            if (_nalezy.Count == 0 && !iKdyzPrazdne) return;
             var nastaveni = GeminiNastaveni.Nacti();
             using (var dlg = new NalezyForm(_nalezy, nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt))
             {
@@ -1638,6 +1772,15 @@ namespace CodePlanner
             _podilHotovo = celkem > 0 ? (z + p) / (double)celkem : 0;
             pnlPostup.Invalidate();
             lblPostup.Text = "Zodpovězeno " + z + " · předpoklady " + p + " · otevřené " + otevrene + " (z " + celkem + ")";
+
+            if (_isBusy || _chatBusy) return;   // průběžný stav AI operace nepřepisujeme
+
+            if (string.IsNullOrWhiteSpace(_projekt.Napad) && _projekt.Odpovedi.Count == 0)
+            {
+                Stav("Začněte popsáním nápadu (krok 1) a nechte AI připravit otázky na míru.");
+                return;
+            }
+
             Stav("Verze specifikace " + _projekt.Verze + " · zodpovězeno " + z + "/" + celkem +
                  " · předpoklady " + p + " · otevřené otázky " + otevrene);
         }
@@ -1660,7 +1803,7 @@ namespace CodePlanner
         {
             if (!_dirty) return true;
             var res = MessageBox.Show(this,
-                "Máš neuložené změny. Chceš je před pokračováním uložit?",
+                "Máte neuložené změny. Chcete je před pokračováním uložit?",
                 "Neuložené změny", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (res == DialogResult.Cancel) return false;
             if (res == DialogResult.Yes) return UlozitProjekt();
@@ -1682,6 +1825,7 @@ namespace CodePlanner
             {
                 Stav("Nastavení Gemini API uloženo.");
             }
+            ObnovApiBanner();   // po uložení klíče banner zmizí
         }
 
         private async void BtnAiAnalyza_Click(object sender, EventArgs e)
@@ -1714,14 +1858,33 @@ namespace CodePlanner
                 return;
             }
 
-            if (_projekt.Odpovedi.Count > 0)
+            if (_projekt.Odpovedi.Count > 0 || _projekt.UserStories.Count > 0)
             {
                 var confirm = MessageBox.Show(this,
-                    "Tato akce analyzuje nápad pomocí Gemini API a přepíše všechny stávající odpovědi specifikace.\n\nChcete pokračovat?",
-                    "Přepsat odpovědi?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    "Analýza přepíše stávající odpovědi (" + _projekt.Odpovedi.Count + "), smaže User Stories (" +
+                    _projekt.UserStories.Count + ") i odhad.\n" +
+                    "Před spuštěním se vytvoří záloha, kterou lze vrátit tlačítkem „↩ Vrátit analýzu“.\n\nChcete pokračovat?",
+                    "Přepsat specifikaci?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                 if (confirm != DialogResult.Yes) return;
             }
 
+            // Záloha projektu před analýzou – lze ji vrátit tlačítkem „↩ Vrátit analýzu“ v liště.
+            try
+            {
+                SpecSluzba.UlozProjekt(_projekt, CestaZalohyPredAnalyzou);
+                _snapshotAnalyzyExistuje = true;
+                ObnovTlacitkoVratitAnalyzu();
+            }
+            catch (Exception exZaloha)
+            {
+                var pokracovat = MessageBox.Show(this,
+                    "Nepodařilo se vytvořit zálohu před analýzou:\n\n" + exZaloha.Message +
+                    "\n\nChcete přesto pokračovat (bez možnosti vrácení)?",
+                    "Záloha se nezdařila", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (pokracovat != DialogResult.Yes) return;
+            }
+
+            string stavPoDokonceni = "Připraveno.";
             NastavitStavBusy(true, "Komunikuji s Gemini API...");
             _ctsAi = new CancellationTokenSource();
 
@@ -1766,13 +1929,29 @@ namespace CodePlanner
                             Moznosti = ot.Moznosti ?? new List<string>()
                         });
 
-                        _projekt.Odpovedi.Add(new Odpoved
+                        // Prázdnou odpověď od AI nepřidáváme – otázka zůstane otevřená.
+                        // Má-li otázka výchozí předpoklad, použijeme ho a poctivě označíme jako předpoklad.
+                        string textOdpovedi = (ot.Odpoved ?? "").Trim();
+                        if (textOdpovedi.Length > 0)
                         {
-                            OtazkaId = ot.Id,
-                            Text = ot.Odpoved ?? "",
-                            JePredpoklad = ot.JePredpoklad,
-                            Cas = DateTime.Now
-                        });
+                            _projekt.Odpovedi.Add(new Odpoved
+                            {
+                                OtazkaId = ot.Id,
+                                Text = textOdpovedi,
+                                JePredpoklad = ot.JePredpoklad,
+                                Cas = DateTime.Now
+                            });
+                        }
+                        else if (!string.IsNullOrWhiteSpace(ot.VychoziPredpoklad))
+                        {
+                            _projekt.Odpovedi.Add(new Odpoved
+                            {
+                                OtazkaId = ot.Id,
+                                Text = ot.VychoziPredpoklad.Trim(),
+                                JePredpoklad = true,
+                                Cas = DateTime.Now
+                            });
+                        }
                     }
                 }
                 finally
@@ -1793,24 +1972,25 @@ namespace CodePlanner
                 ObnovVse();
                 VyberOtazku(SpecSluzba.DalsiNezodpovezena(_projekt));
 
-                MessageBox.Show(this, "Specifikace byla úspěšně vygenerována pomocí AI.",
-                    "Analýza dokončena", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // úspěch bez vyskakovacího okna – stačí stavový řádek (viz UX bod „méně modálů“)
+                stavPoDokonceni = "✅ Analýza dokončena – projděte si otázky a odpovědi (krok 2). Vrátit ji lze tlačítkem „↩ Vrátit analýzu“.";
             }
             catch (Exception ex)
             {
                 if (ex is OperationCanceledException || ex.InnerException is OperationCanceledException)
                 {
-                    Stav("Analýza zrušena uživatelem.");
+                    stavPoDokonceni = "Analýza zrušena – projekt zůstal beze změn.";
                     return;
                 }
                 MessageBox.Show(this, $"Během analýzy nápadu došlo k chybě:\n\n{ex.Message}",
                     "Chyba AI analýzy", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                stavPoDokonceni = "Analýza se nezdařila – projekt zůstal beze změn.";
             }
             finally
             {
                 _ctsAi?.Dispose();
                 _ctsAi = null;
-                NastavitStavBusy(false, "Připraveno.");
+                NastavitStavBusy(false, stavPoDokonceni);
             }
         }
 
@@ -1821,6 +2001,16 @@ namespace CodePlanner
             btnAiAnalyza.Enabled = true;
             btnAiAnalyza.Text = busy ? "❌ Zrušit analýzu" : "🤖 Analyzovat přes Gemini";
 
+            if (busy)
+            {
+                _casStartuAiOperace = DateTime.Now;
+                _prubehTimer.Start();
+            }
+            else
+            {
+                _prubehTimer.Stop();
+            }
+
             txtNazev.Enabled = !busy;
             txtNapad.Enabled = !busy;
             lstOtazky.Enabled = !busy;
@@ -1828,7 +2018,8 @@ namespace CodePlanner
             btnOdpovedet.Enabled = !busy;
             btnPredpoklad.Enabled = !busy;
 
-            if (cmbTyp != null) cmbTyp.Enabled = !busy;
+            // typ zůstává zamčený, dokud má projekt dynamické otázky z AI analýzy (viz ObnovComboTypu)
+            if (cmbTyp != null) cmbTyp.Enabled = !busy && (_projekt?.Otazky == null || _projekt.Otazky.Count == 0);
             if (btnDiktovatNapad != null) btnDiktovatNapad.Enabled = !busy;
             if (btnDiktovatOdpoved != null) btnDiktovatOdpoved.Enabled = !busy;
             if (btnReferencie != null) btnReferencie.Enabled = !busy;
@@ -1872,14 +2063,18 @@ namespace CodePlanner
             try
             {
                 HlasovyVstup.SpustNahravani();
+                _tlacitkoDiktovaniAktivni = b;
+                _diktovaniLimitTimer.Stop();
+                _diktovaniLimitTimer.Start();   // pojistka: auto-stop po 3 minutách
                 b.BackColor = Color.Crimson;
                 b.ForeColor = Color.White;
                 b.Text = "🎤 Nahrávám...";
-                Stav("Diktování spuštěno. Držte tlačítko nebo klikněte znovu pro stop.");
+                Stav("Diktování spuštěno. Držte tlačítko, nebo klikněte znovu pro stop (limit 3 minuty).");
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Nepodařilo se spustit nahrávání z mikrofonu:\n\n" + ex.Message,
+                MessageBox.Show(this,
+                    "Nepodařilo se spustit nahrávání z mikrofonu:\n\n" + ex.Message + "\n\n" + RadaMikrofon,
                     "Chyba nahrávání", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -1896,15 +2091,17 @@ namespace CodePlanner
 
             if (_diktovaniClickToggle) return; // v toggle režimu nereagujeme na uvolnění
 
+            if (_tlacitkoDiktovaniAktivni == null) return; // nahrávání už neběží (např. auto-stop po 3 minutách, nebo selhal start)
+
             var b = (Button)sender;
             double ms = (DateTime.Now - _casSpusteniDiktovani).TotalMilliseconds;
 
             if (ms < 400)
             {
-                // stisk byl příliš rychlý -> přepneme do Toggle-to-Talk
+                // stisk byl příliš rychlý -> přepneme do režimu klikni-a-mluv
                 _diktovaniClickToggle = true;
-                b.Text = "🎤 Nahrávám (klikni stop)";
-                Stav("Režim klikni-a-mluv spuštěn. Nahrávám... Klikněte na tlačítko pro ukončení.");
+                b.Text = "🎤 Nahrávám (klikněte pro stop)";
+                Stav("Režim klikni-a-mluv spuštěn. Nahrávám… Klikněte na tlačítko znovu pro ukončení (limit 3 minuty).");
             }
             else
             {
@@ -1918,11 +2115,14 @@ namespace CodePlanner
             // Click se spouští po MouseUp. Vše obsloužíme v MouseDown a MouseUp.
         }
 
-        private async void ZastavADiktuj(Button b)
+        private async void ZastavADiktuj(Button b, bool autoStop = false)
         {
+            _diktovaniLimitTimer.Stop();
+            _tlacitkoDiktovaniAktivni = null;
+
             Stav("Zastavuji nahrávání...");
             string cestaWav = HlasovyVstup.ZastavNahravani();
-            
+
             // obnovíme výchozí vzhled tlačítka
             if (b == btnDiktovatNapad)
             {
@@ -1934,12 +2134,12 @@ namespace CodePlanner
             {
                 b.BackColor = Color.White;
                 b.ForeColor = Navy;
-                b.Text = "🎤 Diktovat (držet)";
+                b.Text = "🎤 Diktovat";
             }
 
             if (string.IsNullOrEmpty(cestaWav))
             {
-                Stav("Diktování zrušeno nebo se nepodařilo uložit nahrávku.");
+                Stav("Diktování zrušeno, nebo se nahrávku nepodařilo uložit. " + RadaMikrofon);
                 return;
             }
 
@@ -1980,12 +2180,17 @@ namespace CodePlanner
 
                 if (string.IsNullOrWhiteSpace(prepis))
                 {
-                    Stav("Nebylo rozpoznáno žádné slovo.");
+                    MessageBox.Show(this,
+                        "Z nahrávky nebylo rozpoznáno žádné slovo.\n\n" + RadaMikrofon,
+                        "Prázdný přepis", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    Stav("Přepis nevrátil žádný text.");
                 }
                 else
                 {
                     VlozTextNaKurzor(cil, prepis);
-                    Stav("Hlas úspěšně přepsán.");
+                    Stav(autoStop
+                        ? "⏱ Nahrávání bylo po 3 minutách automaticky ukončeno a hlas přepsán."
+                        : "Hlas úspěšně přepsán.");
                 }
             }
             catch (Exception ex)
@@ -2000,7 +2205,7 @@ namespace CodePlanner
                 if (!this.IsDisposed && this.Created)
                 {
                     b.Enabled = true;
-                    b.Text = b == btnDiktovatNapad ? "🎤 Diktovat" : "🎤 Diktovat (držet)";
+                    b.Text = "🎤 Diktovat";
                 }
                 
                 // smažeme dočasný soubor
@@ -2397,7 +2602,7 @@ namespace CodePlanner
             {
                 rtbChatLog.SelectionFont = _chatFontItalic;
                 rtbChatLog.SelectionColor = Color.Gray;
-                rtbChatLog.AppendText("Zatím zde nejsou žádné zprávy. Zeptej se na cokoliv ohledně aktuální specifikace!\n\n");
+                rtbChatLog.AppendText("Zatím zde nejsou žádné zprávy. Zeptejte se na cokoli ohledně své specifikace – třeba co v zadání ještě chybí.\n\n");
                 return;
             }
 
@@ -2420,17 +2625,33 @@ namespace CodePlanner
 
         private async void OdeslatChat()
         {
-            if (_chatBusy) return;
+            if (_chatBusy)
+            {
+                // tlačítko je během čekání přepnuté na „Zrušit“ – druhé kliknutí operaci stornuje
+                _ctsChat?.Cancel();
+                return;
+            }
 
             if (txtChatInput.ForeColor == Color.Gray || string.IsNullOrWhiteSpace(txtChatInput.Text))
             {
                 return;
             }
 
+            // kontrola API klíče předem – zpráva se nesmí dostat do historie
+            var nastaveni = GeminiNastaveni.Nacti();
+            if (string.IsNullOrWhiteSpace(nastaveni.EfektivniApiKey))
+            {
+                MessageBox.Show(this,
+                    "Není nastaven API klíč pro Gemini.\nOtevřete prosím Nastavení AI a zadejte klíč.",
+                    "Chybí API klíč", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                OtevritNastaveni();
+                return;
+            }
+
             string text = txtChatInput.Text.Trim();
             _chatBusy = true;
             txtChatInput.Enabled = false;
-            btnSendChat.Enabled = false;
+            btnSendChat.Text = "Zrušit";
             btnClearChat.Enabled = false;
             txtChatInput.Clear();
 
@@ -2446,11 +2667,13 @@ namespace CodePlanner
 
             Cursor = Cursors.WaitCursor;
             Stav("AI asistent odpovídá...");
+            _casStartuAiOperace = DateTime.Now;
+            _prubehTimer.Start();
+            _ctsChat = new CancellationTokenSource();
 
             try
             {
-                var nastaveni = GeminiNastaveni.Nacti();
-                string odpoved = await GeminiService.PosliChatZpravuAsync(nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt, _projekt.ChatHistory);
+                string odpoved = await GeminiService.PosliChatZpravuAsync(nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt, _projekt.ChatHistory, _ctsChat.Token);
 
                 if (this.IsDisposed || !this.Created) return;
 
@@ -2464,22 +2687,37 @@ namespace CodePlanner
             {
                 if (this.IsDisposed || !this.Created) return;
 
+                // zprávu vrátíme zpět do vstupu, ať o ni uživatel nepřijde
                 if (_projekt.ChatHistory != null && _projekt.ChatHistory.Contains(uzivatelZprava))
                 {
                     _projekt.ChatHistory.Remove(uzivatelZprava);
                 }
                 txtChatInput.Text = text;
+                txtChatInput.ForeColor = Color.Black;
                 VykresliHistoriiChatu();
 
-                MessageBox.Show(this, "Chyba při komunikaci s AI asistentem:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Stav("Komunikace selhala.");
+                bool zruseno = ex is OperationCanceledException || ex.InnerException is OperationCanceledException;
+                if (zruseno)
+                {
+                    Stav("Odeslání zprávy zrušeno – text zůstal ve vstupním poli.");
+                }
+                else
+                {
+                    MessageBox.Show(this, "Chyba při komunikaci s AI asistentem:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Stav("Komunikace selhala.");
+                }
             }
             finally
             {
+                _ctsChat?.Dispose();
+                _ctsChat = null;
+                _chatBusy = false;
+                _prubehTimer.Stop();
+
                 if (!this.IsDisposed && this.Created)
                 {
-                    _chatBusy = false;
                     txtChatInput.Enabled = true;
+                    btnSendChat.Text = "Odeslat";
                     btnSendChat.Enabled = true;
                     btnClearChat.Enabled = true;
                     Cursor = Cursors.Default;
@@ -2507,6 +2745,210 @@ namespace CodePlanner
             _debounceTimer.Stop();
             if (_nacitani) return;
             RenderSpecifikaci();
+        }
+
+        // ---------------- autosave, zálohy a další pomocné metody (UX fáze 2) ----------------
+
+        /// <summary>Každé 2 minuty tiše uloží rozdělanou práci do %AppData%\CodePlanner\autosave.vcbrief.</summary>
+        private void AutosaveTimer_Tick(object sender, EventArgs e)
+        {
+            if (!_dirty || _isBusy || _chatBusy) return;
+            if (ProjektJePrazdny()) return;
+
+            try
+            {
+                SpecSluzba.UlozProjekt(_projekt, CestaAutosave);
+            }
+            catch
+            {
+                // automatická záloha nikdy nesmí rušit práci uživatele
+            }
+        }
+
+        private bool ProjektJePrazdny()
+            => string.IsNullOrWhiteSpace(_projekt.Nazev)
+               && string.IsNullOrWhiteSpace(_projekt.Napad)
+               && _projekt.Odpovedi.Count == 0
+               && (_projekt.ChatHistory == null || _projekt.ChatHistory.Count == 0);
+
+        private static void SmazAutosave()
+        {
+            try { if (File.Exists(CestaAutosave)) File.Delete(CestaAutosave); } catch { }
+        }
+
+        /// <summary>Po startu nabídne obnovu automatické zálohy (např. po pádu aplikace nebo výpadku proudu).</summary>
+        private void NabidniObnovuAutosave()
+        {
+            try
+            {
+                if (!File.Exists(CestaAutosave)) return;
+
+                DateTime cas = File.GetLastWriteTime(CestaAutosave);
+                var res = MessageBox.Show(this,
+                    $"Byla nalezena automatická záloha neuložené práce (z {cas:HH:mm}). Chcete ji obnovit?",
+                    "Obnova automatické zálohy", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (res == DialogResult.Yes)
+                {
+                    var projekt = SpecSluzba.NactiProjekt(CestaAutosave);
+                    _cestaSouboru = null;   // záloha nemá „domovský“ soubor – uložení si vyžádá cestu
+                    NactiProjektDoUi(projekt);
+                    OznacZmenu();
+                    Stav("Automatická záloha obnovena – nezapomeňte projekt uložit (Ctrl+S).");
+                }
+
+                SmazAutosave();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Automatickou zálohu se nepodařilo načíst.\n\n" + ex.Message,
+                    "Chyba obnovy", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                SmazAutosave();
+            }
+        }
+
+        /// <summary>Nahradí aktuální projekt daty z jiné instance a obnoví celé UI (ponechá _cestaSouboru beze změny).</summary>
+        private void NactiProjektDoUi(SpecProjekt novy)
+        {
+            _projekt = novy ?? new SpecProjekt();
+
+            _nacitani = true;
+            txtNazev.Text = _projekt.Nazev ?? "";
+            txtNapad.Text = _projekt.Napad ?? "";
+            NastavTypCombo(_projekt.TypProjektuKlic);
+            txtOdpoved.Text = "";
+            _nacitani = false;
+
+            ObnovVse();
+            VyberOtazku(SpecSluzba.DalsiNezodpovezena(_projekt));
+        }
+
+        /// <summary>„↩ Vrátit analýzu“ – obnoví projekt ze zálohy vytvořené těsně před poslední AI analýzou.</summary>
+        private void VratitAnalyzu()
+        {
+            if (!_snapshotAnalyzyExistuje || !File.Exists(CestaZalohyPredAnalyzou))
+            {
+                _snapshotAnalyzyExistuje = false;
+                ObnovTlacitkoVratitAnalyzu();
+                Stav("Záloha před analýzou není k dispozici.");
+                return;
+            }
+
+            var res = MessageBox.Show(this,
+                "Projekt se vrátí do stavu před poslední AI analýzou. Současné otázky a odpovědi budou nahrazeny.\n\nChcete pokračovat?",
+                "Vrátit analýzu", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (res != DialogResult.Yes) return;
+
+            try
+            {
+                var projekt = SpecSluzba.NactiProjekt(CestaZalohyPredAnalyzou);
+                NactiProjektDoUi(projekt);
+                OznacZmenu();
+                Stav("Projekt vrácen do stavu před AI analýzou.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Zálohu se nepodařilo načíst.\n\n" + ex.Message,
+                    "Chyba obnovy", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ObnovTlacitkoVratitAnalyzu()
+        {
+            if (btnVratitAnalyzu == null) return;
+            btnVratitAnalyzu.Visible = _snapshotAnalyzyExistuje;
+            btnVratitAnalyzu.Enabled = _snapshotAnalyzyExistuje;
+        }
+
+        /// <summary>Banner „chybí API klíč“ – zobrazí se jen, dokud uživatel klíč nenastaví.</summary>
+        private void ObnovApiBanner()
+        {
+            if (lblApiBanner == null) return;
+            var nastaveni = GeminiNastaveni.Nacti();
+            lblApiBanner.Visible = string.IsNullOrWhiteSpace(nastaveni.EfektivniApiKey);
+        }
+
+        /// <summary>Po AI analýze je typ projektu daný vygenerovanými otázkami – combo se zamkne.</summary>
+        private void ObnovComboTypu()
+        {
+            if (cmbTyp == null) return;
+            bool zafixovan = _projekt?.Otazky != null && _projekt.Otazky.Count > 0;
+            cmbTyp.Enabled = !zafixovan && !_isBusy;
+            _tipReference?.SetToolTip(cmbTyp, zafixovan
+                ? "Typ je zafixován AI analýzou – nová analýza ho může změnit."
+                : "Šablona řízených otázek podle typu projektu.");
+        }
+
+        /// <summary>Před exportem shrne, co ve specifikaci ještě chybí nebo je zastaralé. Vrací true = exportovat.</summary>
+        private bool PotvrdExportSeSouhrnem()
+        {
+            int celkem = SpecSluzba.VratOtazkyProjektu(_projekt).Count();
+            int zodpovezeno = SpecSluzba.PocetZodpovezenych(_projekt) + SpecSluzba.PocetPredpokladu(_projekt);
+            int otevrene = SpecSluzba.OtevreneOtazky(_projekt).Count;
+            int nalezy = KonzistencniKontrola.Zkontroluj(_projekt).Count;
+            bool metrikyStare = SpecSluzba.MetrikyJsouZastarale(_projekt);
+            bool storiesStare = SpecSluzba.StoriesJsouZastarale(_projekt);
+
+            if (otevrene == 0 && nalezy == 0 && !metrikyStare && !storiesStare) return true;
+
+            var casti = new List<string>();
+            if (otevrene > 0) casti.Add("zodpovězeno " + zodpovezeno + " z " + celkem + " otázek");
+            if (nalezy > 0) casti.Add(Mnozne(nalezy, "nález kontroly konzistence", "nálezy kontroly konzistence", "nálezů kontroly konzistence"));
+            if (metrikyStare && storiesStare) casti.Add("odhad i user stories jsou zastaralé");
+            else if (metrikyStare) casti.Add("odhad je zastaralý");
+            else if (storiesStare) casti.Add("user stories jsou zastaralé");
+
+            var res = MessageBox.Show(this,
+                "Specifikace zatím není úplná:\n\n• " + string.Join("\n• ", casti) + "\n\nPřesto exportovat?",
+                "Souhrn před exportem", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            return res == DialogResult.Yes;
+        }
+
+        /// <summary>„❓“ v toolbaru – přehled kroků práce a klávesových zkratek.</summary>
+        private void ZobrazNapovedu()
+        {
+            MessageBox.Show(this,
+                "JAK POSTUPOVAT (4 kroky):\n" +
+                "1. Popište svůj nápad vlastními slovy (klidně diktujte).\n" +
+                "2. Nechte AI připravit otázky na míru (🤖 Analyzovat), nebo rovnou odpovídejte na připravené otázky.\n" +
+                "3. Doplňte odpovědi – když nevíte, použijte předpoklad.\n" +
+                "4. Hotovou specifikaci exportujte: Markdown pro lidi, JSON pro AI agenta, PDF či HTML pro klienty.\n\n" +
+                "KLÁVESOVÉ ZKRATKY:\n" +
+                "Ctrl+N – nový projekt\n" +
+                "Ctrl+O – otevřít projekt\n" +
+                "Ctrl+S – uložit projekt (funguje i během práce AI)\n" +
+                "Ctrl+M – export Markdown\n" +
+                "Ctrl+J – export JSON\n" +
+                "Ctrl+P – export PDF\n" +
+                "Ctrl+Enter – uložit odpověď na vybranou otázku\n" +
+                "Esc – zrušit běžící AI operaci\n\n" +
+                "ZNAČKY V SEZNAMU OTÁZEK:\n" +
+                "✔ zodpovězeno · P předpoklad · V/S dopad vysoký/střední",
+                "Nápověda", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        /// <summary>Každou sekundu ukazuje, jak dlouho už AI operace běží, a připomíná možnost zrušení.</summary>
+        private void PrubehTimer_Tick(object sender, EventArgs e)
+        {
+            if (!_isBusy && !_chatBusy)
+            {
+                _prubehTimer.Stop();
+                return;
+            }
+            int sekundy = (int)(DateTime.Now - _casStartuAiOperace).TotalSeconds;
+            Stav("⏳ Komunikuji s AI… (" + sekundy + "s) – Esc zruší");
+        }
+
+        /// <summary>Pojistka diktování: po 3 minutách nahrávání automaticky zastaví a odešle k přepisu.</summary>
+        private void DiktovaniLimitTimer_Tick(object sender, EventArgs e)
+        {
+            _diktovaniLimitTimer.Stop();
+            var b = _tlacitkoDiktovaniAktivni;
+            if (b == null) return;
+
+            _diktovaniClickToggle = false;
+            Stav("⏱ Nahrávání dosáhlo limitu 3 minut – automaticky je ukončuji a přepisuji.");
+            ZastavADiktuj(b, autoStop: true);
         }
     }
 

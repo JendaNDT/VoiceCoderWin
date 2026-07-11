@@ -498,6 +498,183 @@ internal static class Testy
         Over(html.Contains("HTML Test Projekt"), "HTML rendering: obsahuje název projektu");
         Over(html.Contains("toggleTheme"), "HTML rendering: obsahuje JS přepínač témat");
 
+        // --- atomické ukládání (.tmp / .bak) ---
+        string tmpAtom = Path.Combine(Path.GetTempPath(), "test_atomic.vcbrief");
+        string tmpAtomTmp = tmpAtom + ".tmp";
+        string tmpAtomBak = tmpAtom + ".bak";
+        try
+        {
+            if (File.Exists(tmpAtom)) File.Delete(tmpAtom);
+            if (File.Exists(tmpAtomTmp)) File.Delete(tmpAtomTmp);
+            if (File.Exists(tmpAtomBak)) File.Delete(tmpAtomBak);
+
+            var pAtom = new SpecProjekt { Nazev = "Atomický test" };
+            SpecSluzba.UlozProjekt(pAtom, tmpAtom);
+            Over(File.Exists(tmpAtom), "atomický zápis: první uložení vytvoří soubor");
+            Over(!File.Exists(tmpAtomTmp), "atomický zápis: po uložení nezůstává .tmp");
+            Over(!File.Exists(tmpAtomBak), "atomický zápis: první uložení nevytváří .bak");
+
+            pAtom.Nazev = "Atomický test v2";
+            SpecSluzba.UlozProjekt(pAtom, tmpAtom);
+            Over(File.Exists(tmpAtomBak), "atomický zápis: druhé uložení vytvoří .bak");
+            Over(!File.Exists(tmpAtomTmp), "atomický zápis: po druhém uložení nezůstává .tmp");
+
+            var pAtomNacteny = SpecSluzba.NactiProjekt(tmpAtom);
+            Over(pAtomNacteny.Nazev == "Atomický test v2", "atomický zápis: obsah jde načíst zpět");
+
+            var pAtomZaloha = SpecSluzba.NactiProjekt(tmpAtomBak);
+            Over(pAtomZaloha.Nazev == "Atomický test", "atomický zápis: .bak obsahuje předchozí verzi");
+
+            string slozkaAtomKoren = Path.Combine(Path.GetTempPath(), "cp_atomic_" + Guid.NewGuid().ToString("N"));
+            string cestaVPodslozce = Path.Combine(slozkaAtomKoren, "podslozka", "novy.vcbrief");
+            try
+            {
+                SpecSluzba.UlozProjekt(pAtom, cestaVPodslozce);
+                Over(File.Exists(cestaVPodslozce), "atomický zápis: založí chybějící adresář");
+            }
+            finally
+            {
+                if (Directory.Exists(slozkaAtomKoren)) Directory.Delete(slozkaAtomKoren, true);
+            }
+        }
+        finally
+        {
+            if (File.Exists(tmpAtom)) File.Delete(tmpAtom);
+            if (File.Exists(tmpAtomTmp)) File.Delete(tmpAtomTmp);
+            if (File.Exists(tmpAtomBak)) File.Delete(tmpAtomBak);
+        }
+
+        // --- log přepisu odpovědi „bylo → je“ ---
+        var pByloJe = new SpecProjekt();
+        SpecSluzba.Odpovez(pByloJe, "cil-problem", "První verze odpovědi");
+        var prvniZaznam = pByloJe.Log.Last(l => l.Akce == "Odpověď");
+        Over(!prvniZaznam.Detail.Contains("bylo:"), "log: první odpověď nemá formát bylo→je");
+
+        SpecSluzba.Odpovez(pByloJe, "cil-problem", "Druhá verze odpovědi");
+        var zaznamZmeny = pByloJe.Log.Last(l => l.Akce == "Změna odpovědi");
+        Over(zaznamZmeny.Detail.Contains("bylo: 'První verze odpovědi'"), "log změny: obsahuje původní text (bylo)");
+        Over(zaznamZmeny.Detail.Contains("je: 'Druhá verze odpovědi'"), "log změny: obsahuje nový text (je)");
+
+        SpecSluzba.Odpovez(pByloJe, "cil-problem", "Druhá verze odpovědi");
+        var stejnyText = pByloJe.Log.Last(l => l.Akce == "Změna odpovědi");
+        Over(!stejnyText.Detail.Contains("bylo:"), "log změny: přepis stejným textem nemá formát bylo→je");
+
+        // --- roundtrip nových polí (AiNalezy, CasGenerovaniStories, CasAiKontroly) ---
+        var pNovaPole = new SpecProjekt { Nazev = "Nová pole" };
+        pNovaPole.CasGenerovaniStories = new DateTime(2026, 1, 2, 3, 4, 5);
+        pNovaPole.CasAiKontroly = new DateTime(2026, 2, 3, 4, 5, 6);
+        pNovaPole.AiNalezy.Add(new AiNalez { Zavaznost = "Rozpor", Titulek = "AI titulek", Detail = "AI detail" });
+        pNovaPole.AiNalezy.Add(new AiNalez { Zavaznost = "Varovani", Titulek = "AI titulek 2", Detail = "AI detail 2" });
+
+        string tmpCestaNova = Path.Combine(Path.GetTempPath(), "test_nova_pole.vcbrief");
+        try
+        {
+            SpecSluzba.UlozProjekt(pNovaPole, tmpCestaNova);
+            var nactenyNova = SpecSluzba.NactiProjekt(tmpCestaNova);
+            Over(nactenyNova.CasGenerovaniStories == pNovaPole.CasGenerovaniStories, "nová pole roundtrip: CasGenerovaniStories sedí");
+            Over(nactenyNova.CasAiKontroly == pNovaPole.CasAiKontroly, "nová pole roundtrip: CasAiKontroly sedí");
+            Over(nactenyNova.AiNalezy.Count == 2, "nová pole roundtrip: počet AI nálezů sedí");
+            Over(nactenyNova.AiNalezy[0].Zavaznost == "Rozpor", "nová pole roundtrip: závažnost nálezu sedí");
+            Over(nactenyNova.AiNalezy[1].Titulek == "AI titulek 2", "nová pole roundtrip: titulek nálezu sedí");
+            Over(nactenyNova.AiNalezy[1].Detail == "AI detail 2", "nová pole roundtrip: detail nálezu sedí");
+        }
+        finally
+        {
+            if (File.Exists(tmpCestaNova)) File.Delete(tmpCestaNova);
+            if (File.Exists(tmpCestaNova + ".bak")) File.Delete(tmpCestaNova + ".bak");
+        }
+
+        // --- zpětná kompatibilita: starý soubor bez nových polí ---
+        string tmpStary = Path.Combine(Path.GetTempPath(), "test_stary_format.vcbrief");
+        try
+        {
+            File.WriteAllText(tmpStary, "{\"Nazev\":\"Starý projekt\",\"AiNalezy\":null}");
+            var pStaryFormat = SpecSluzba.NactiProjekt(tmpStary);
+            Over(pStaryFormat.AiNalezy != null && pStaryFormat.AiNalezy.Count == 0, "zpětná kompatibilita: AiNalezy se doinicializují");
+            Over(pStaryFormat.CasGenerovaniStories == null, "zpětná kompatibilita: CasGenerovaniStories je null");
+            Over(pStaryFormat.CasAiKontroly == null, "zpětná kompatibilita: CasAiKontroly je null");
+        }
+        finally
+        {
+            if (File.Exists(tmpStary)) File.Delete(tmpStary);
+        }
+
+        // --- převod nálezu kontroly na AiNalez ---
+        var prevod = AiNalez.Z(new Nalez { Zavaznost = Zavaznost.Rozpor, Titulek = "T", Detail = "D" });
+        Over(prevod.Zavaznost == "Rozpor" && prevod.Titulek == "T" && prevod.Detail == "D", "AiNalez.Z: převod z Nalez sedí 1:1");
+
+        // --- poznámky o zastaralosti v exportech ---
+        var pStale = new SpecProjekt { Nazev = "Zastaralé odhady" };
+        pStale.Metriky = new ProjektMetriky
+        {
+            CasovyOdhadMin = "10 h",
+            CasovyOdhadMax = "20 h",
+            Komplexita = "Nízká",
+            TechnickyRozbor = "rozbor",
+            CasVypoctu = DateTime.Now.AddHours(-2)
+        };
+        pStale.UserStories.Add(new UserStory { Id = "US-01", Titulek = "Story", Popis = "Popis", Priorita = "Vysoká" });
+        pStale.CasGenerovaniStories = DateTime.Now.AddHours(-2);
+        pStale.Upraveno = DateTime.Now;
+
+        string mdStale = SpecSluzba.RenderMarkdown(pStale);
+        Over(mdStale.Contains("Odhad byl vygenerován pro starší verzi specifikace"), "MD: poznámka o zastaralém odhadu");
+        Over(mdStale.Contains("User stories byly vygenerovány pro starší verzi specifikace"), "MD: poznámka o zastaralých stories");
+
+        string htmlStale = SpecSluzba.RenderHtml(pStale);
+        Over(htmlStale.Contains("Odhad byl vygenerován pro starší verzi specifikace"), "HTML: poznámka o zastaralém odhadu");
+        Over(htmlStale.Contains("User stories byly vygenerovány pro starší verzi specifikace"), "HTML: poznámka o zastaralých stories");
+
+        var pCerstve = new SpecProjekt { Nazev = "Čerstvé odhady" };
+        pCerstve.Metriky = new ProjektMetriky { CasovyOdhadMin = "10 h", CasVypoctu = DateTime.Now.AddHours(1) };
+        pCerstve.UserStories.Add(new UserStory { Id = "US-01", Titulek = "Story" });
+        pCerstve.CasGenerovaniStories = DateTime.Now.AddHours(1);
+        Over(!SpecSluzba.RenderMarkdown(pCerstve).Contains("pro starší verzi specifikace"), "MD: čerstvé odhady bez poznámky");
+        Over(SpecSluzba.MetrikyJsouZastarale(pStale), "helper: MetrikyJsouZastarale platí pro starý výpočet");
+        Over(!SpecSluzba.MetrikyJsouZastarale(pCerstve), "helper: MetrikyJsouZastarale neplatí pro čerstvý výpočet");
+        Over(SpecSluzba.StoriesJsouZastarale(pStale), "helper: StoriesJsouZastarale platí pro staré stories");
+        Over(!SpecSluzba.StoriesJsouZastarale(new SpecProjekt()), "helper: StoriesJsouZastarale neplatí bez stories");
+
+        // --- patička exportů ---
+        Over(mdStale.Contains("*Vytvořeno nástrojem CodePlanner*"), "MD: patička obsahuje nový text");
+        Over(!mdStale.Contains("demonstrátor bez AI"), "MD: patička už neobsahuje „demonstrátor bez AI“");
+        Over(!htmlStale.Contains("demonstrátor bez AI"), "HTML: neobsahuje „demonstrátor bez AI“");
+
+        // --- OrezText (ořez kontextu pro AI prompty) ---
+        string dlouhyText = new string('a', 500);
+        string orezanyText = GeminiService.OrezText(dlouhyText, 100);
+        Over(orezanyText.Contains("[…zkráceno]"), "OrezText: přidává poznámku o zkrácení");
+        Over(orezanyText.StartsWith(new string('a', 100)), "OrezText: zachová prvních maxZnaku znaků");
+        Over(orezanyText.Length < dlouhyText.Length, "OrezText: výsledek je kratší než původní text");
+
+        string kratkyText = "krátký text";
+        Over(GeminiService.OrezText(kratkyText, 100) == kratkyText, "OrezText: krátký text zůstává beze změny");
+        Over(GeminiService.OrezText(null) == null, "OrezText: null projde bez chyby");
+        Over(GeminiService.OrezText(dlouhyText) == dlouhyText, "OrezText: výchozí limit 100 000 znaků text pod limitem nemění");
+
+        // --- L1: JSON export po AI analýze obsahuje všechny odpovědi ---
+        var pJsonDyn = new SpecProjekt { Nazev = "JSON Dyn" };
+        pJsonDyn.Otazky.Add(new Otazka { Id = "dyn-q1", Sekce = "Technika", Text = "Q1?", VychoziPredpoklad = "P1" });
+        SpecSluzba.Odpovez(pJsonDyn, "dyn-q1", "Odpoved na dynamic");
+        string jsonDyn = SpecSluzba.RenderJson(pJsonDyn);
+        Over(jsonDyn.Contains("\"id\": \"dyn-q1\""), "L1 test: JSON obsahuje ID dynamické otázky");
+        Over(jsonDyn.Contains("\"odpoved\": \"Odpoved na dynamic\""), "L1 test: JSON obsahuje odpověď na dynamickou otázku");
+
+        // --- L2: XSS / JS injection v HTML exportu přes ID user story ---
+        var pXss = new SpecProjekt { Nazev = "HTML XSS Test" };
+        pXss.UserStories.Add(new UserStory
+        {
+            Id = "US-1<script>alert('XSS')</script>",
+            Titulek = "Test story",
+            Popis = "Popis story",
+            Priorita = "Vysoká"
+        });
+        string htmlXss = SpecSluzba.RenderHtml(pXss);
+        Over(!htmlXss.Contains("<div class=\"backlog-item\" id=\"story-US-1<script>"), "L2 test: HTML neobsahuje surový skript v id");
+        Over(htmlXss.Contains("id=\"story-US-1scriptalertXSSscript\""), "L2 test: HTML obsahuje bezpečně vyčištěné id");
+        Over(htmlXss.Contains("toggleStory(this, 'story-US-1scriptalertXSSscript')"), "L2 test: HTML obsahuje bezpečně vyčištěné id v onchange");
+        Over(htmlXss.Contains("US-1&lt;script&gt;alert("), "L2 test: us.Id je v textu správně escapováno");
+
         Console.WriteLine();
         Console.WriteLine("VSECHNY TESTY OK (" + _ok + " kontrol)");
     }

@@ -242,6 +242,24 @@ namespace CodePlanner.Core
         public DateTime CasVypoctu { get; set; }
     }
 
+    /// <summary>Jeden nález AI kontroly konzistence, uložený v projektu.
+    /// Tvar polí odpovídá 1:1 tomu, co dnes vrací GeminiService.AnalyzujKonzistenciAsync
+    /// (deserializace GeminiKonzistenceNalez → Nalez): závažnost „Rozpor“/„Varovani“, titulek a detail.</summary>
+    public class AiNalez
+    {
+        public string Zavaznost { get; set; } = "Varovani"; // "Rozpor" / "Varovani"
+        public string Titulek { get; set; } = "";
+        public string Detail { get; set; } = "";
+
+        /// <summary>Převod z výsledku GeminiService.AnalyzujKonzistenciAsync – NalezyForm tak může nálezy rovnou uložit.</summary>
+        public static AiNalez Z(Nalez nalez) => new AiNalez
+        {
+            Zavaznost = nalez == null ? "Varovani" : nalez.Zavaznost.ToString(),
+            Titulek = nalez != null ? (nalez.Titulek ?? "") : "",
+            Detail = nalez != null ? (nalez.Detail ?? "") : ""
+        };
+    }
+
     /// <summary>Celý projekt = zdroj pravdy. Ukládá se jako .vcbrief (JSON).</summary>
     public class SpecProjekt
     {
@@ -276,6 +294,15 @@ namespace CodePlanner.Core
         public List<UserStory> UserStories { get; set; } = new List<UserStory>();
         public List<ChatMessage> ChatHistory { get; set; } = new List<ChatMessage>();
         public ProjektMetriky Metriky { get; set; } = new ProjektMetriky();
+
+        /// <summary>Kdy byly naposledy vygenerovány user stories (null = zatím nikdy). Nastavuje UI po vygenerování.</summary>
+        public DateTime? CasGenerovaniStories { get; set; }
+
+        /// <summary>Nálezy poslední AI kontroly konzistence (prázdný seznam = zatím žádná neproběhla).</summary>
+        public List<AiNalez> AiNalezy { get; set; } = new List<AiNalez>();
+
+        /// <summary>Kdy naposledy proběhla AI kontrola konzistence (null = zatím nikdy). Nastavuje UI po kontrole.</summary>
+        public DateTime? CasAiKontroly { get; set; }
     }
 
     /// <summary>Pevná sada řízených otázek – seřazená podle dopadu (nejdřív rozhodnutí, která mění architekturu, cenu nebo bezpečnost).</summary>
@@ -643,8 +670,20 @@ namespace CodePlanner.Core
             var stara = p.Odpovedi.FirstOrDefault(o => o.OtazkaId == otazkaId);
             if (stara != null) p.Odpovedi.Remove(stara);
 
-            p.Odpovedi.Add(new Odpoved { OtazkaId = otazkaId, Text = text.Trim(), JePredpoklad = false, Cas = DateTime.Now });
-            Zmena(p, stara == null ? "Odpověď" : "Změna odpovědi", ot.GetText(p.TypProjektuKlic) + " → " + Zkrat(text, 120));
+            string novyText = text.Trim();
+            p.Odpovedi.Add(new Odpoved { OtazkaId = otazkaId, Text = novyText, JePredpoklad = false, Cas = DateTime.Now });
+
+            string detail;
+            if (stara != null && stara.Text != novyText)
+            {
+                // Přepis existující odpovědi jiným textem – do logu zapíšeme obě hodnoty.
+                detail = ot.GetText(p.TypProjektuKlic) + " → bylo: '" + Zkrat(stara.Text, 120) + "' → je: '" + Zkrat(novyText, 120) + "'";
+            }
+            else
+            {
+                detail = ot.GetText(p.TypProjektuKlic) + " → " + Zkrat(novyText, 120);
+            }
+            Zmena(p, stara == null ? "Odpověď" : "Změna odpovědi", detail);
         }
 
         public static void PouzijPredpoklad(SpecProjekt p, string otazkaId)
@@ -683,6 +722,21 @@ namespace CodePlanner.Core
         public static List<Otazka> OtevreneOtazky(SpecProjekt p)
             => VratOtazkyProjektu(p).Where(ot => OdpovedNa(p, ot.Id) == null).ToList();
 
+        /// <summary>Metriky jsou spočítané, ale specifikace se od jejich výpočtu změnila.</summary>
+        public static bool MetrikyJsouZastarale(SpecProjekt p)
+            => p != null && p.Metriky != null && p.Metriky.CasVypoctu != default && p.Metriky.CasVypoctu < p.Upraveno;
+
+        /// <summary>User stories jsou vygenerované, ale specifikace se od jejich generování změnila.</summary>
+        public static bool StoriesJsouZastarale(SpecProjekt p)
+            => p != null && p.UserStories != null && p.UserStories.Count > 0
+               && p.CasGenerovaniStories.HasValue && p.CasGenerovaniStories.Value < p.Upraveno;
+
+        /// <summary>Text poznámky o zastaralém odhadu (metrikách) – sdílený mezi exporty.</summary>
+        public const string PoznamkaZastaraleMetriky = "⚠ Odhad byl vygenerován pro starší verzi specifikace – doporučujeme přepočítat.";
+
+        /// <summary>Text poznámky o zastaralých user stories – sdílený mezi exporty.</summary>
+        public const string PoznamkaZastaraleStories = "⚠ User stories byly vygenerovány pro starší verzi specifikace – doporučujeme je vygenerovat znovu.";
+
         // ---------- rendering ----------
 
         private static string Datum(DateTime d) => d.ToString("d'.' M'.' yyyy H':'mm");
@@ -702,7 +756,7 @@ namespace CodePlanner.Core
             sb.AppendLine("# Specifikace: " + nazev);
             sb.AppendLine("*Typ projektu: " + VratNazevTypu(p.TypProjektuKlic) + "*");
             sb.AppendLine("*Verze specifikace " + p.Verze + " · aktualizováno " + Datum(p.Upraveno) + "*");
-            sb.AppendLine("*Vytvořeno nástrojem CodePlanner (demonstrátor bez AI)*");
+            sb.AppendLine("*Vytvořeno nástrojem CodePlanner*");
             sb.AppendLine();
 
             sb.AppendLine("## Původní nápad");
@@ -772,6 +826,11 @@ namespace CodePlanner.Core
             sb.AppendLine("- Zodpovězeno: " + PocetZodpovezenych(p) + " / " + VratOtazkyProjektu(p).Count());
             sb.AppendLine("- Označené předpoklady: " + PocetPredpokladu(p));
             sb.AppendLine("- Otevřené otázky: " + otevrene.Count);
+            // Markdown nemá vlastní sekci metrik/stories – poznámky o zastaralosti patří do souhrnu stavu.
+            if (MetrikyJsouZastarale(p))
+                sb.AppendLine("- " + PoznamkaZastaraleMetriky);
+            if (StoriesJsouZastarale(p))
+                sb.AppendLine("- " + PoznamkaZastaraleStories);
             sb.AppendLine();
 
             sb.AppendLine("## Log rozhodnutí");
@@ -976,6 +1035,8 @@ namespace CodePlanner.Core
                 string komplexitaClass = p.Metriky.Komplexita.Contains("Vysoká") ? "prio-high" : (p.Metriky.Komplexita.Contains("Střední") ? "prio-med" : "prio-low");
                 sb.AppendLine("                <div class=\"card filterable-section\">");
                 sb.AppendLine("                    <div class=\"card-title\">Projektové metriky</div>");
+                if (MetrikyJsouZastarale(p))
+                    sb.AppendLine($"                    <div class=\"stale-note\" style=\"background-color: rgba(255,193,7,0.15); border: 1px solid var(--prio-med); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;\">{PoznamkaZastaraleMetriky}</div>");
                 sb.AppendLine("                    <div class=\"metric-cards-container\">");
                 sb.AppendLine("                        <div class=\"metric-mini-card\">");
                 sb.AppendLine("                            <div class=\"metric-mini-label\">Vývoj (odhad)</div>");
@@ -1011,6 +1072,8 @@ namespace CodePlanner.Core
             {
                 sb.AppendLine("                <div class=\"card filterable-section\">");
                 sb.AppendLine("                    <div class=\"card-title\">Agilní backlog</div>");
+                if (StoriesJsouZastarale(p))
+                    sb.AppendLine($"                    <div class=\"stale-note\" style=\"background-color: rgba(255,193,7,0.15); border: 1px solid var(--prio-med); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;\">{PoznamkaZastaraleStories}</div>");
                 foreach (var us in p.UserStories)
                 {
                     string safeId = new string((us.Id ?? "").Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_').ToArray());
@@ -1128,9 +1191,31 @@ namespace CodePlanner.Core
 
         // ---------- ukládání projektu ----------
 
+        /// <summary>Atomické uložení: JSON se nejdřív zapíše do souboru „cesta.tmp“ a teprve po úspěšném
+        /// zápisu se vymění za cílový soubor. Při přepisu existujícího projektu zůstane jeho předchozí
+        /// verze jako „cesta.bak“ – při pádu uprostřed zápisu tak nikdy nevznikne poškozený .vcbrief.</summary>
         public static void UlozProjekt(SpecProjekt p, string cesta)
         {
-            File.WriteAllText(cesta, JsonSerializer.Serialize(p, JsonOpt), new UTF8Encoding(true));
+            string json = JsonSerializer.Serialize(p, JsonOpt);
+
+            // Zajistíme existenci cílového adresáře.
+            string slozka = Path.GetDirectoryName(Path.GetFullPath(cesta));
+            if (!string.IsNullOrEmpty(slozka)) Directory.CreateDirectory(slozka);
+
+            string tmp = cesta + ".tmp";
+            if (File.Exists(tmp)) File.Delete(tmp); // případný pozůstatek z dřívějšího přerušeného uložení
+
+            File.WriteAllText(tmp, json, new UTF8Encoding(true));
+
+            if (File.Exists(cesta))
+            {
+                // Atomická výměna – původní obsah zůstane v záloze .bak.
+                File.Replace(tmp, cesta, cesta + ".bak");
+            }
+            else
+            {
+                File.Move(tmp, cesta);
+            }
         }
 
         public static SpecProjekt NactiProjekt(string cesta)
@@ -1145,6 +1230,7 @@ namespace CodePlanner.Core
                 if (p.UserStories == null) p.UserStories = new List<UserStory>();
                 if (p.ChatHistory == null) p.ChatHistory = new List<ChatMessage>();
                 if (p.Metriky == null) p.Metriky = new ProjektMetriky();
+                if (p.AiNalezy == null) p.AiNalezy = new List<AiNalez>();
             }
             return p ?? new SpecProjekt();
         }
@@ -1457,3 +1543,4 @@ namespace CodePlanner.Core
     }
 }
 // konec souboru
+
