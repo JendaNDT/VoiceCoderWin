@@ -224,14 +224,14 @@ internal static class Testy
             }
         }
 
-        var prompt = GeminiService.SestavPrompt("Chci vytvořit jednoduchou kalkulačku", TypProjektu.Obecna);
+        var prompt = GeminiService.SestavPrompt("Chci vytvořit jednoduchou kalkulačku", TypProjektu.Obecna.ToString());
         Over(!string.IsNullOrWhiteSpace(prompt), "prompt: sestavení promptu vrací neprázdný text");
         Over(prompt.Contains("Chci vytvořit jednoduchou kalkulačku"), "prompt: obsahuje původní nápad");
         Over(prompt.Contains("cil-problem"), "prompt: obsahuje ID otázky");
         Over(prompt.Contains("Výchozí předpoklad: Plně offline"), "prompt: obsahuje výchozí předpoklady");
 
         // --- Testy referenčních podkladů (v0.7) ---
-        var promptSReferenci = GeminiService.SestavPrompt("Nápad", TypProjektu.Obecna, "Toto jsou referenční specifikace.");
+        var promptSReferenci = GeminiService.SestavPrompt("Nápad", TypProjektu.Obecna.ToString(), "Toto jsou referenční specifikace.");
         Over(promptSReferenci.Contains("Toto jsou referenční specifikace."), "prompt: obsahuje referenční podklady");
 
         var pRef = new SpecProjekt

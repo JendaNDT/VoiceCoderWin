@@ -1,13 +1,12 @@
 # CodePlanner – Project Status
-*Naposled aktualizováno: 11. 7. 2026 (v1.9)*
+*Naposled aktualizováno: 11. 7. 2026 (v2.0.0)*
 
 ## 🎯 Co to je
 Windows .exe demonstrátor projektu CodePlanner AI (dle PDF návrhu, kap. 18): z volně popsaného nápadu vytvoří řízenými otázkami verzovanou specifikaci s exportem pro kódovacího agenta.
 Stack: C# / .NET 8, WinForms, self-contained single-file exe (win-x64), kompilováno ze sandboxu přes EnableWindowsTargeting.
 
 ## ⏭️ Příští krok
-**Jenda otestuje v1.9 – interaktivní HTML export (micro-site).** Rozbalte ZIP, klikněte na tlačítko "🌐 HTML Web…" a vyzkoušejte vyexportovaný soubor v prohlížeči. Otestujte přepínání tmavého režimu, live search a odškrtávání úkolů!
-ZIP `CodePlanner_v1.9_Windows.zip` je ve složce projektu.
+**Jenda otestuje verzi v2.0.0 – plně refaktorovaný a stabilizovaný CodePlanner s Gemini API.** Spusťte zkompilovaný soubor, otestujte integraci s Gemini, test připojení, AI analýzu, odhady i exporty!
 
 ## ✅ Hotovo
 - v0.1 kompletní a **ověřená Jendou na reálných Windows** (spuštění, okno, diktování, exporty – vše OK)

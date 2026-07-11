@@ -17,8 +17,10 @@ namespace CodePlanner
         private TextBox txtApiKey;
         private ComboBox cbModel;
         private CheckBox chkZobrazitKlic;
+        private LinkLabel lnkGetApiKey;
         private Button btnUlozit;
         private Button btnStorno;
+        private Button btnTest;
 
         public SettingsForm()
         {
@@ -30,7 +32,7 @@ namespace CodePlanner
 
             _nastaveni = GeminiNastaveni.Nacti();
 
-            ClientSize = new Size(460, 240);
+            ClientSize = new Size(500, 275);
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -44,6 +46,18 @@ namespace CodePlanner
 
             PostavUI();
             NactiHodnoty();
+
+            this.FormClosing += (s, e) =>
+            {
+                this.Font?.Dispose();
+                txtApiKey?.Font?.Dispose();
+                cbModel?.Font?.Dispose();
+                chkZobrazitKlic?.Font?.Dispose();
+                lnkGetApiKey?.Font?.Dispose();
+                btnUlozit?.Font?.Dispose();
+                btnStorno?.Font?.Dispose();
+                btnTest?.Font?.Dispose();
+            };
         }
 
         private void PostavUI()
@@ -52,15 +66,16 @@ namespace CodePlanner
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 5,
+                RowCount = 6,
                 Padding = new Padding(16),
                 BackColor = Color.Transparent
             };
             pnlMain.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // API key label
-            pnlMain.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // API key textbox + checkbox flow
+            pnlMain.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // API key textbox
+            pnlMain.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Checkbox + LinkLabel flow
             pnlMain.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Model label
             pnlMain.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Model combobox
-            pnlMain.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // Buttons flow
+            pnlMain.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // Spacer/Buttons
 
             var lblApiKey = new Label
             {
@@ -77,19 +92,53 @@ namespace CodePlanner
                 Margin = new Padding(0, 0, 0, 4)
             };
 
+            var pnlKeyHelper = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Margin = new Padding(0, 0, 0, 12),
+                Height = 24
+            };
+
             chkZobrazitKlic = new CheckBox
             {
                 Text = "Zobrazit klíč",
                 AutoSize = true,
                 Font = new Font("Segoe UI", 8.5f),
                 ForeColor = SedaText,
-                Margin = new Padding(0, 0, 0, 12),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 12, 0)
             };
             chkZobrazitKlic.CheckedChanged += (s, e) =>
             {
                 txtApiKey.UseSystemPasswordChar = !chkZobrazitKlic.Checked;
             };
+
+            lnkGetApiKey = new LinkLabel
+            {
+                Text = "Získat API klíč v Google AI Studio",
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Underline),
+                LinkColor = Teal,
+                ActiveLinkColor = Color.FromArgb(19, 150, 137),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 3, 0, 0)
+            };
+            lnkGetApiKey.LinkClicked += (s, e) =>
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://aistudio.google.com/") { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Odkaz nelze otevřít: " + ex.Message, "Chyba", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            pnlKeyHelper.Controls.Add(chkZobrazitKlic);
+            pnlKeyHelper.Controls.Add(lnkGetApiKey);
 
             var lblModel = new Label
             {
@@ -141,18 +190,32 @@ namespace CodePlanner
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0)
+                Margin = new Padding(8, 0, 0, 0)
             };
             btnUlozit.FlatAppearance.BorderSize = 0;
             btnUlozit.FlatAppearance.MouseOverBackColor = Color.FromArgb(19, 150, 137);
             btnUlozit.Click += BtnUlozit_Click;
 
+            btnTest = new Button
+            {
+                Text = "🧪 Test připojení",
+                Size = new Size(130, 30),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Navy,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0)
+            };
+            btnTest.FlatAppearance.BorderColor = Color.Silver;
+            btnTest.FlatAppearance.MouseOverBackColor = Color.FromArgb(235, 238, 242);
+            btnTest.Click += BtnTest_Click;
+
             pnlTlacitka.Controls.Add(btnStorno);
             pnlTlacitka.Controls.Add(btnUlozit);
+            pnlTlacitka.Controls.Add(btnTest);
 
             pnlMain.Controls.Add(lblApiKey, 0, 0);
             pnlMain.Controls.Add(txtApiKey, 0, 1);
-            pnlMain.Controls.Add(chkZobrazitKlic, 0, 2);
+            pnlMain.Controls.Add(pnlKeyHelper, 0, 2);
             pnlMain.Controls.Add(lblModel, 0, 3);
             pnlMain.Controls.Add(cbModel, 0, 4);
 
@@ -177,7 +240,6 @@ namespace CodePlanner
             }
             else
             {
-                // Pokud model v seznamu chybí, přidáme jej jako volbu
                 cbModel.Items.Add(_nastaveni.GeminiModel);
                 cbModel.SelectedIndex = cbModel.Items.Count - 1;
             }
@@ -198,6 +260,38 @@ namespace CodePlanner
             {
                 MessageBox.Show(this, "Chyba při ukládání nastavení:\n\n" + ex.Message,
                     "Chyba", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async void BtnTest_Click(object sender, EventArgs e)
+        {
+            string testKey = txtApiKey.Text.Trim();
+            string testModel = cbModel.SelectedItem?.ToString() ?? "gemini-2.5-flash";
+
+            if (string.IsNullOrWhiteSpace(testKey))
+            {
+                MessageBox.Show(this, "Pro testování zadejte platný API klíč.", "Test připojení", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            btnTest.Enabled = false;
+            btnTest.Text = "🧪 Testuji...";
+            Cursor = Cursors.WaitCursor;
+
+            try
+            {
+                await GeminiService.TestPripojeniAsync(testKey, testModel);
+                MessageBox.Show(this, "Připojení k Gemini API bylo úspěšně ověřeno. Váš API klíč je platný!", "Test úspěšný", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Test připojení selhal:\n\n" + ex.Message, "Chyba připojení", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnTest.Enabled = true;
+                btnTest.Text = "🧪 Test připojení";
+                Cursor = Cursors.Default;
             }
         }
     }

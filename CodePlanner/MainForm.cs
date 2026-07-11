@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Threading;
 using System.Drawing.Drawing2D;
 using System.Drawing.Printing;
 using System.IO;
@@ -28,9 +29,11 @@ namespace CodePlanner
         private bool _dirty = false;
         private bool _nacitani = false;   // potlačí eventy při programových změnách
         private string _napadSnapshot = "";
-        private Timer _debounceTimer;     // Debounce pro název a nápad
+        private string _nazevSnapshot = "";
+        private System.Windows.Forms.Timer _debounceTimer;     // Debounce pro název a nápad
         private ToolStrip toolBar;        // Uchovává instanci toolbar pro snadné vypnutí
         private bool _chatBusy = false;   // Flag proti vícenásobnému odeslání chatu
+        private CancellationTokenSource _ctsAi = null;
 
         // stav otázek pro vykreslení seznamu (plní ObnovSeznamOtazek)
         private readonly List<char> _stavyOtazek = new List<char>();     // '○' / '≈' / '✔'
@@ -57,6 +60,11 @@ namespace CodePlanner
         private Panel pnlPostup;
         private DateTime _casSpusteniDiktovani;
         private bool _diktovaniClickToggle = false;
+        private bool _ignorujDalsiMouseUp = false;
+        private bool _isBusy = false;
+        private Font _chatFontItalic;
+        private Font _chatFontBold;
+        private Font _chatFontRegular;
         private RichTextBox rtbSpec;
         private Label lblSpecHlavicka;
         private Label lblNalezy;
@@ -76,9 +84,13 @@ namespace CodePlanner
         {
             SablonaSluzba.NactiCustomSablony();
             _tipReference = new ToolTip();
-            _debounceTimer = new Timer();
+            _debounceTimer = new System.Windows.Forms.Timer();
             _debounceTimer.Interval = 500;
             _debounceTimer.Tick += DebounceTimer_Tick;
+
+            _chatFontItalic = new Font("Segoe UI", 10f, FontStyle.Italic);
+            _chatFontBold = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
+            _chatFontRegular = new Font("Segoe UI", 9.5f, FontStyle.Regular);
 
             try
             {
@@ -117,7 +129,16 @@ namespace CodePlanner
 
             FormClosing += (s, e) =>
             {
-                if (!PotvrdNeulozene()) e.Cancel = true;
+                if (!PotvrdNeulozene())
+                {
+                    e.Cancel = true;
+                }
+                else if (!e.Cancel)
+                {
+                    _chatFontItalic?.Dispose();
+                    _chatFontBold?.Dispose();
+                    _chatFontRegular?.Dispose();
+                }
             };
 
             NovyProjekt(prvniSpusteni: true);
@@ -128,6 +149,10 @@ namespace CodePlanner
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (_isBusy || _chatBusy)
+            {
+                if (keyData != Keys.Escape) return true;
+            }
             switch (keyData)
             {
                 case Keys.Control | Keys.N:
@@ -208,7 +233,7 @@ namespace CodePlanner
             };
             tool.Items.Add(tip2);
 
-            var verze = new ToolStripLabel("v1.7")
+            var verze = new ToolStripLabel("v2.0.0")
             {
                 Alignment = ToolStripItemAlignment.Right,
                 ForeColor = Color.Silver
@@ -315,10 +340,17 @@ namespace CodePlanner
                 _debounceTimer.Stop();
                 _debounceTimer.Start();
             };
+            txtNazev.Enter += (s, e) => _nazevSnapshot = _projekt.Nazev ?? "";
             txtNazev.Leave += (s, e) =>
             {
                 if (_nacitani) return;
                 _debounceTimer.Stop();
+                if ((_projekt.Nazev ?? "") != _nazevSnapshot)
+                {
+                    SpecSluzba.Zmena(_projekt, "Název", $"Změněn název projektu na '{_projekt.Nazev}'.");
+                    ObnovLog();
+                    ObnovStav();
+                }
                 RenderSpecifikaci();
             };
 
@@ -378,7 +410,7 @@ namespace CodePlanner
 
             btnReferencie = new Button
             {
-                Text = "📎 Připojit podklad",
+                Text = "📎 Referenční podklady",
                 Height = 22,
                 Margin = new Padding(12, 2, 0, 0),
                 BackColor = Color.Gainsboro,
@@ -392,13 +424,13 @@ namespace CodePlanner
             btnReferencie.Click += BtnReferencie_Click;
 
             menuReferencie = new ContextMenuStrip();
-            menuReferencie.Items.Add("Zobrazit obsah přílohy...", null, (s, e) => ZobrazitObsahReferenci());
-            menuReferencie.Items.Add("Změnit soubor...", null, (s, e) => NahratReferenci());
-            menuReferencie.Items.Add("Odebrat přílohu", null, (s, e) => OdebratReferenci());
+            menuReferencie.Items.Add("Zobrazit referenční podklady...", null, (s, e) => ZobrazitObsahReferenci());
+            menuReferencie.Items.Add("Změnit podklady...", null, (s, e) => NahratReferenci());
+            menuReferencie.Items.Add("Odebrat podklady", null, (s, e) => OdebratReferenci());
 
             btnMockup = new Button
             {
-                Text = "🖼 Připojit skicu",
+                Text = "🖼 Vizuální mockup (skica)",
                 Height = 22,
                 Margin = new Padding(12, 2, 0, 0),
                 BackColor = Color.Gainsboro,
@@ -412,9 +444,9 @@ namespace CodePlanner
             btnMockup.Click += BtnMockup_Click;
 
             menuMockup = new ContextMenuStrip();
-            menuMockup.Items.Add("Zobrazit skicu...", null, (s, e) => ZobrazitMockup());
-            menuMockup.Items.Add("Změnit skicu...", null, (s, e) => NahratMockup());
-            menuMockup.Items.Add("Odebrat skicu", null, (s, e) => OdebratMockup());
+            menuMockup.Items.Add("Zobrazit vizuální mockup...", null, (s, e) => ZobrazitMockup());
+            menuMockup.Items.Add("Změnit vizuální mockup...", null, (s, e) => NahratMockup());
+            menuMockup.Items.Add("Odebrat vizuální mockup", null, (s, e) => OdebratMockup());
 
             pnlNapadHeader.Controls.Add(lblNapad);
             pnlNapadHeader.Controls.Add(btnAiAnalyza);
@@ -445,9 +477,7 @@ namespace CodePlanner
                 _debounceTimer.Stop();
                 if ((_projekt.Napad ?? "") != _napadSnapshot)
                 {
-                    _projekt.Verze++;
-                    _projekt.Upraveno = DateTime.Now;
-                    _projekt.Log.Add(new Rozhodnuti { Cas = DateTime.Now, Akce = "Nápad", Detail = "Upraven text původního nápadu." });
+                    SpecSluzba.Zmena(_projekt, "Nápad", "Upraven text původního nápadu.");
                     ObnovLog();
                     ObnovStav();
                     RenderSpecifikaci();
@@ -1290,6 +1320,11 @@ namespace CodePlanner
                     var exp = new PdfExporter(_projekt);
                     exp.Export(this, dlg.FileName);
 
+                    if (!File.Exists(dlg.FileName))
+                    {
+                        throw new FileNotFoundException("Soubor PDF nebyl vytvořen. Zkontrolujte prosím konfiguraci své PDF tiskárny.");
+                    }
+
                     Stav("Export do PDF dokončen.");
                     var res = MessageBox.Show(this,
                         "Specifikace byla úspěšně exportována do PDF.\n\nChceš vytvořený soubor ihned otevřít?",
@@ -1415,6 +1450,10 @@ namespace CodePlanner
             txtOdpoved.Text = odp != null && !odp.JePredpoklad ? odp.Text : "";
             _nacitani = false;
 
+            foreach (Control ctrl in pnlQuickOptions.Controls)
+            {
+                ctrl.Dispose();
+            }
             pnlQuickOptions.Controls.Clear();
             var moznosti = ot.GetMoznosti(_projekt.TypProjektuKlic);
             if (moznosti != null && moznosti.Count > 0)
@@ -1516,11 +1555,14 @@ namespace CodePlanner
 
             if (string.IsNullOrWhiteSpace(dotaz) || dotaz.Length < 2) return;
 
+            int prvyIndex = -1;
             int start = 0;
             while (start < rtbSpec.TextLength)
             {
                 int index = rtbSpec.Find(dotaz, start, RichTextBoxFinds.None);
                 if (index == -1) break;
+
+                if (prvyIndex == -1) prvyIndex = index;
 
                 rtbSpec.Select(index, dotaz.Length);
                 rtbSpec.SelectionBackColor = Color.Yellow;
@@ -1529,6 +1571,12 @@ namespace CodePlanner
                 start = index + dotaz.Length;
             }
             rtbSpec.SelectionLength = 0; // zrušíme výběr
+
+            if (prvyIndex != -1)
+            {
+                rtbSpec.SelectionStart = prvyIndex;
+                rtbSpec.ScrollToCaret();
+            }
         }
 
         private void ObnovNalezy()
@@ -1603,7 +1651,7 @@ namespace CodePlanner
         private void ObnovTitulek()
         {
             string nazev = string.IsNullOrWhiteSpace(_projekt.Nazev) ? "nový projekt" : _projekt.Nazev.Trim();
-            Text = "CodePlanner – " + nazev + (_dirty ? " *" : "") + " – v1.2";
+            Text = "CodePlanner – " + nazev + (_dirty ? " *" : "") + " – v2.0.0";
         }
 
         private void Stav(string text) => lblStav.Text = text;
@@ -1638,6 +1686,12 @@ namespace CodePlanner
 
         private async void BtnAiAnalyza_Click(object sender, EventArgs e)
         {
+            if (_isBusy)
+            {
+                _ctsAi?.Cancel();
+                return;
+            }
+
             var nastaveni = GeminiNastaveni.Nacti();
             string apiKey = nastaveni.EfektivniApiKey;
 
@@ -1669,43 +1723,62 @@ namespace CodePlanner
             }
 
             NastavitStavBusy(true, "Komunikuji s Gemini API...");
+            _ctsAi = new CancellationTokenSource();
 
             try
             {
                 string model = nastaveni.GeminiModel;
-                string mockupMime = (_projekt.MockupNazev != null && (_projekt.MockupNazev.EndsWith(".jpg") || _projekt.MockupNazev.EndsWith(".jpeg"))) ? "image/jpeg" : "image/png";
-                var vysledek = await GeminiService.AnalyzujNapadAsync(apiKey, model, napad, _projekt.TypProjektuKlic, _projekt.ReferencniText, _projekt.MockupBase64, mockupMime);
+                string mockupMime = (_projekt.MockupNazev != null && (_projekt.MockupNazev.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || _projekt.MockupNazev.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
+                var vysledek = await GeminiService.AnalyzujNapadAsync(apiKey, model, napad, _projekt.TypProjektuKlic, _projekt.ReferencniText, _projekt.MockupBase64, mockupMime, _ctsAi.Token);
 
-                _nacitani = true;
-                _projekt.Nazev = vysledek.Nazev ?? "";
-                txtNazev.Text = _projekt.Nazev;
-                _projekt.Otazky.Clear();
-                _projekt.Odpovedi.Clear();
-
-                foreach (var ot in vysledek.Otazky)
+                if (vysledek == null || vysledek.Otazky == null || vysledek.Otazky.Count == 0)
                 {
-                    var dopadEnum = string.Equals(ot.Dopad, "Vysoky", StringComparison.OrdinalIgnoreCase) ? Dopad.Vysoky : Dopad.Stredni;
-                    _projekt.Otazky.Add(new Otazka
-                    {
-                        Id = ot.Id,
-                        Sekce = ot.Sekce,
-                        Dopad = dopadEnum,
-                        Text = ot.Text,
-                        Napoveda = ot.Napoveda,
-                        VychoziPredpoklad = ot.VychoziPredpoklad,
-                        Moznosti = ot.Moznosti ?? new List<string>()
-                    });
-
-                    _projekt.Odpovedi.Add(new Odpoved
-                    {
-                        OtazkaId = ot.Id,
-                        Text = ot.Odpoved ?? "",
-                        JePredpoklad = ot.JePredpoklad,
-                        Cas = DateTime.Now
-                    });
+                    throw new Exception("AI analýza nevrátila žádné otázky.");
                 }
 
-                _nacitani = false;
+                var uniqueQuestions = vysledek.Otazky
+                    .Where(ot => !string.IsNullOrWhiteSpace(ot.Id))
+                    .GroupBy(ot => ot.Id)
+                    .Select(g => g.First())
+                    .ToList();
+
+                try
+                {
+                    _nacitani = true;
+                    _projekt.Nazev = vysledek.Nazev ?? "";
+                    txtNazev.Text = _projekt.Nazev;
+                    _projekt.Otazky.Clear();
+                    _projekt.Odpovedi.Clear();
+                    _projekt.UserStories.Clear();
+                    _projekt.Metriky = new ProjektMetriky();
+
+                    foreach (var ot in uniqueQuestions)
+                    {
+                        var dopadEnum = string.Equals(ot.Dopad, "Vysoky", StringComparison.OrdinalIgnoreCase) ? Dopad.Vysoky : Dopad.Stredni;
+                        _projekt.Otazky.Add(new Otazka
+                        {
+                            Id = ot.Id,
+                            Sekce = ot.Sekce,
+                            Dopad = dopadEnum,
+                            Text = ot.Text,
+                            Napoveda = ot.Napoveda,
+                            VychoziPredpoklad = ot.VychoziPredpoklad,
+                            Moznosti = ot.Moznosti ?? new List<string>()
+                        });
+
+                        _projekt.Odpovedi.Add(new Odpoved
+                        {
+                            OtazkaId = ot.Id,
+                            Text = ot.Odpoved ?? "",
+                            JePredpoklad = ot.JePredpoklad,
+                            Cas = DateTime.Now
+                        });
+                    }
+                }
+                finally
+                {
+                    _nacitani = false;
+                }
 
                 _projekt.Verze++;
                 _projekt.Upraveno = DateTime.Now;
@@ -1725,20 +1798,28 @@ namespace CodePlanner
             }
             catch (Exception ex)
             {
+                if (ex is OperationCanceledException || ex.InnerException is OperationCanceledException)
+                {
+                    Stav("Analýza zrušena uživatelem.");
+                    return;
+                }
                 MessageBox.Show(this, $"Během analýzy nápadu došlo k chybě:\n\n{ex.Message}",
                     "Chyba AI analýzy", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
+                _ctsAi?.Dispose();
+                _ctsAi = null;
                 NastavitStavBusy(false, "Připraveno.");
             }
         }
 
         private void NastavitStavBusy(bool busy, string textStavu)
         {
+            _isBusy = busy;
             Stav(textStavu);
-            btnAiAnalyza.Enabled = !busy;
-            btnAiAnalyza.Text = busy ? "⏳ Analyzuji..." : "🤖 Analyzovat přes Gemini";
+            btnAiAnalyza.Enabled = true;
+            btnAiAnalyza.Text = busy ? "❌ Zrušit analýzu" : "🤖 Analyzovat přes Gemini";
 
             txtNazev.Enabled = !busy;
             txtNapad.Enabled = !busy;
@@ -1746,6 +1827,12 @@ namespace CodePlanner
             txtOdpoved.Enabled = !busy;
             btnOdpovedet.Enabled = !busy;
             btnPredpoklad.Enabled = !busy;
+
+            if (cmbTyp != null) cmbTyp.Enabled = !busy;
+            if (btnDiktovatNapad != null) btnDiktovatNapad.Enabled = !busy;
+            if (btnDiktovatOdpoved != null) btnDiktovatOdpoved.Enabled = !busy;
+            if (btnReferencie != null) btnReferencie.Enabled = !busy;
+            if (btnMockup != null) btnMockup.Enabled = !busy;
 
             if (toolBar != null) toolBar.Enabled = !busy;
             if (txtChatInput != null) txtChatInput.Enabled = !busy;
@@ -1760,6 +1847,14 @@ namespace CodePlanner
             if (e.Button != MouseButtons.Left) return;
 
             var b = (Button)sender;
+
+            if (_diktovaniClickToggle)
+            {
+                _diktovaniClickToggle = false;
+                _ignorujDalsiMouseUp = true;
+                ZastavADiktuj(b);
+                return;
+            }
             
             // zkontrolujeme API klíč dřív, než začneme nahrávat
             var nastaveni = GeminiNastaveni.Nacti();
@@ -1792,6 +1887,13 @@ namespace CodePlanner
         private void BtnDiktovat_MouseUp(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
+            
+            if (_ignorujDalsiMouseUp)
+            {
+                _ignorujDalsiMouseUp = false;
+                return;
+            }
+
             if (_diktovaniClickToggle) return; // v toggle režimu nereagujeme na uvolnění
 
             var b = (Button)sender;
@@ -1993,12 +2095,7 @@ namespace CodePlanner
 
                     _projekt.ReferencniText = text;
                     _projekt.ReferencniNazev = Path.GetFileName(dlg.FileName);
-                    _projekt.Log.Add(new Rozhodnuti 
-                    { 
-                        Cas = DateTime.Now, 
-                        Akce = "Příloha", 
-                        Detail = $"Připojen referenční soubor {_projekt.ReferencniNazev}." 
-                    });
+                    SpecSluzba.Zmena(_projekt, "Příloha", $"Připojen referenční soubor {_projekt.ReferencniNazev}.");
 
                     OznacZmenu();
                     ObnovVse();
@@ -2046,13 +2143,7 @@ namespace CodePlanner
             string nazev = _projekt.ReferencniNazev;
             _projekt.ReferencniText = null;
             _projekt.ReferencniNazev = null;
-            
-            _projekt.Log.Add(new Rozhodnuti 
-            { 
-                Cas = DateTime.Now, 
-                Akce = "Příloha", 
-                Detail = $"Odebrán referenční soubor {nazev}." 
-            });
+            SpecSluzba.Zmena(_projekt, "Příloha", $"Odebrán referenční soubor {nazev}.");
 
             OznacZmenu();
             ObnovVse();
@@ -2142,12 +2233,7 @@ namespace CodePlanner
 
                     _projekt.MockupBase64 = Convert.ToBase64String(bytes);
                     _projekt.MockupNazev = Path.GetFileName(dlg.FileName);
-                    _projekt.Log.Add(new Rozhodnuti 
-                    { 
-                        Cas = DateTime.Now, 
-                        Akce = "Skica", 
-                        Detail = $"Připojen vizuální mockup {_projekt.MockupNazev}." 
-                    });
+                    SpecSluzba.Zmena(_projekt, "Skica", $"Připojen vizuální mockup {_projekt.MockupNazev}.");
 
                     OznacZmenu();
                     ObnovVse();
@@ -2206,13 +2292,7 @@ namespace CodePlanner
             string nazev = _projekt.MockupNazev;
             _projekt.MockupBase64 = null;
             _projekt.MockupNazev = null;
-            
-            _projekt.Log.Add(new Rozhodnuti 
-            { 
-                Cas = DateTime.Now, 
-                Akce = "Skica", 
-                Detail = $"Odebrán vizuální mockup {nazev}." 
-            });
+            SpecSluzba.Zmena(_projekt, "Skica", $"Odebrán vizuální mockup {nazev}.");
 
             OznacZmenu();
             ObnovVse();
@@ -2315,7 +2395,7 @@ namespace CodePlanner
 
             if (_projekt.ChatHistory.Count == 0)
             {
-                rtbChatLog.SelectionFont = new Font("Segoe UI", 10f, FontStyle.Italic);
+                rtbChatLog.SelectionFont = _chatFontItalic;
                 rtbChatLog.SelectionColor = Color.Gray;
                 rtbChatLog.AppendText("Zatím zde nejsou žádné zprávy. Zeptej se na cokoliv ohledně aktuální specifikace!\n\n");
                 return;
@@ -2324,11 +2404,12 @@ namespace CodePlanner
             foreach (var msg in _projekt.ChatHistory)
             {
                 bool isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
-                rtbChatLog.SelectionFont = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
+                rtbChatLog.SelectionFont = _chatFontBold;
                 rtbChatLog.SelectionColor = isUser ? Navy : Teal;
-                rtbChatLog.AppendText(isUser ? "Já: " : "Asistent: ");
+                string casText = msg.Cas == default ? "" : $" [{msg.Cas:H:mm}]";
+                rtbChatLog.AppendText(isUser ? $"Já{casText}: " : $"Asistent{casText}: ");
 
-                rtbChatLog.SelectionFont = new Font("Segoe UI", 9.5f, FontStyle.Regular);
+                rtbChatLog.SelectionFont = _chatFontRegular;
                 rtbChatLog.SelectionColor = Color.Black;
                 rtbChatLog.AppendText(msg.Text + "\n\n");
             }
@@ -2382,6 +2463,14 @@ namespace CodePlanner
             catch (Exception ex)
             {
                 if (this.IsDisposed || !this.Created) return;
+
+                if (_projekt.ChatHistory != null && _projekt.ChatHistory.Contains(uzivatelZprava))
+                {
+                    _projekt.ChatHistory.Remove(uzivatelZprava);
+                }
+                txtChatInput.Text = text;
+                VykresliHistoriiChatu();
+
                 MessageBox.Show(this, "Chyba při komunikaci s AI asistentem:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Stav("Komunikace selhala.");
             }
@@ -2421,1306 +2510,4 @@ namespace CodePlanner
         }
     }
 
-    public class ComboItemTypProjektu
-    {
-        public string Klic { get; set; } = "";
-        public string Nazev { get; set; } = "";
-        public override string ToString() => Nazev;
-    }
-
-    public class NalezyForm : Form
-    {
-        private readonly List<Nalez> _offlineNalezy;
-        private readonly string _apiKey;
-        private readonly string _model;
-        private readonly SpecProjekt _projekt;
-        private ListView lvNalezy;
-        private Button btnAiCheck;
-        private Label lblStatus;
-
-        public NalezyForm(List<Nalez> offlineNalezy, string apiKey, string model, SpecProjekt projekt)
-        {
-            _offlineNalezy = offlineNalezy;
-            _apiKey = apiKey;
-            _model = model;
-            _projekt = projekt;
-
-            Text = "Kontrola konzistence specifikace";
-            Size = new Size(750, 480);
-            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            StartPosition = FormStartPosition.CenterParent;
-            MinimumSize = new Size(500, 350);
-            ShowInTaskbar = false;
-            MinimizeBox = false;
-            MaximizeBox = false;
-            Font = new Font("Segoe UI", 9.5f);
-
-            this.Resize += (s, e) =>
-            {
-                int totalWidth = lvNalezy.ClientSize.Width;
-                if (totalWidth > 320)
-                {
-                    lvNalezy.Columns[0].Width = (int)(totalWidth * 0.15);
-                    lvNalezy.Columns[1].Width = (int)(totalWidth * 0.25);
-                    lvNalezy.Columns[2].Width = totalWidth - lvNalezy.Columns[0].Width - lvNalezy.Columns[1].Width - 4;
-                }
-            };
-
-            var layout = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 3,
-                Padding = new Padding(10)
-            };
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // ListView
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));  // Status label
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));  // Buttons
-
-            lvNalezy = new ListView
-            {
-                Dock = DockStyle.Fill,
-                View = View.Details,
-                FullRowSelect = true,
-                HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Segoe UI", 9.25f)
-            };
-            lvNalezy.Columns.Add("Typ", 110);
-            lvNalezy.Columns.Add("Problém / Téma", 180);
-            lvNalezy.Columns.Add("Detail / Návrh řešení", 410);
-
-            lblStatus = new Label
-            {
-                Text = "Kontrola porovnává klíčová slova. Pro sémantické posouzení spusť hloubkovou AI analýzu.",
-                Dock = DockStyle.Fill,
-                ForeColor = Color.DimGray,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Italic)
-            };
-
-            btnAiCheck = new Button
-            {
-                Text = "🧠 Spustit hloubkovou AI analýzu",
-                Height = 32,
-                AutoSize = true,
-                BackColor = Color.FromArgb(16, 35, 63), // Navy
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9.5f)
-            };
-            btnAiCheck.FlatAppearance.BorderSize = 0;
-            btnAiCheck.Click += BtnAiCheck_Click;
-
-            if (string.IsNullOrWhiteSpace(_apiKey))
-            {
-                btnAiCheck.Enabled = false;
-                btnAiCheck.Text = "🧠 Spustit hloubkovou AI analýzu (chybí API klíč)";
-            }
-
-            var btnZavrit = new Button
-            {
-                Text = "Zavřít",
-                Height = 32,
-                Width = 100,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnZavrit.FlatAppearance.BorderColor = Color.Silver;
-            btnZavrit.Click += (s, e) => Close();
-
-            var flow = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Margin = new Padding(0)
-            };
-            flow.Controls.Add(btnAiCheck);
-            flow.Controls.Add(btnZavrit);
-
-            layout.Controls.Add(lvNalezy, 0, 0);
-            layout.Controls.Add(lblStatus, 0, 1);
-            layout.Controls.Add(flow, 0, 2);
-
-            Controls.Add(layout);
-
-            NaplnNalezy(offlineNalezy, isAi: false);
-        }
-
-        private void NaplnNalezy(List<Nalez> list, bool isAi)
-        {
-            lvNalezy.BeginUpdate();
-            if (!isAi) lvNalezy.Items.Clear();
-
-            foreach (var n in list)
-            {
-                var it = new ListViewItem(n.Zavaznost == Zavaznost.Rozpor ? "❗ ROZPOR" : "⚠ Varování");
-                it.ForeColor = n.Zavaznost == Zavaznost.Rozpor ? Color.FromArgb(155, 28, 28) : Color.FromArgb(180, 110, 0);
-                
-                if (isAi)
-                {
-                    it.Text = n.Zavaznost == Zavaznost.Rozpor ? "🧠 ROZPOR (AI)" : "🧠 Varování (AI)";
-                }
-
-                it.SubItems.Add(n.Titulek);
-                it.SubItems.Add(n.Detail);
-                lvNalezy.Items.Add(it);
-            }
-            lvNalezy.EndUpdate();
-        }
-
-        private async void BtnAiCheck_Click(object sender, EventArgs e)
-        {
-            btnAiCheck.Enabled = false;
-            btnAiCheck.Text = "Analyzuji specifikaci přes Gemini...";
-            lblStatus.Text = "Volám Gemini API pro hloubkovou kontrolu, chvíli strpení...";
-            lblStatus.ForeColor = Color.FromArgb(16, 35, 63);
-
-            try
-            {
-                var aiNalezy = await GeminiService.AnalyzujKonzistenciAsync(_apiKey, _model, _projekt);
-                if (this.IsDisposed || !this.Created) return;
-                
-                if (aiNalezy.Count == 0)
-                {
-                    lblStatus.Text = "Gemini AI nenašla žádné další logické rozpory ani bezpečnostní díry. Skvělá práce!";
-                    lblStatus.ForeColor = Color.Green;
-                }
-                else
-                {
-                    NaplnNalezy(aiNalezy, isAi: true);
-                    lblStatus.Text = $"Analýza dokončena. Nalezeno {aiNalezy.Count} nových AI podnětů.";
-                    lblStatus.ForeColor = Color.Green;
-                }
-            }
-            catch (Exception ex)
-            {
-                if (this.IsDisposed || !this.Created) return;
-                MessageBox.Show(this, "AI analýza selhala:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                lblStatus.Text = "Během AI analýzy došlo k chybě.";
-                lblStatus.ForeColor = Color.Red;
-            }
-            finally
-            {
-                if (!this.IsDisposed && this.Created)
-                {
-                    btnAiCheck.Text = "🧠 Spustit hloubkovou AI analýzu";
-                    btnAiCheck.Enabled = !string.IsNullOrWhiteSpace(_apiKey);
-                }
-            }
-        }
-    }
-
-    public class PdfExporter
-    {
-        private readonly SpecProjekt _projekt;
-        private readonly List<string> _radky;
-        private int _aktualniRadek = 0;
-        private int _vnitrniRadekIndex = 0;
-        private int _strana = 0;
-
-        public PdfExporter(SpecProjekt projekt)
-        {
-            _projekt = projekt;
-            string md = SpecSluzba.RenderMarkdown(projekt);
-            _radky = md.Replace("\r\n", "\n").Split('\n').ToList();
-        }
-
-        public void Export(IWin32Window parent, string pdfPath)
-        {
-            using (var pd = new PrintDocument())
-            {
-                // Vybereme PDF tiskárnu
-                string tiskarna = PrinterSettings.InstalledPrinters.Cast<string>()
-                    .FirstOrDefault(p => p.Contains("Print to PDF") || p.Contains("PDF"));
-                if (tiskarna != null)
-                {
-                    pd.PrinterSettings.PrinterName = tiskarna;
-                    pd.PrinterSettings.PrintToFile = true;
-                    pd.PrinterSettings.PrintFileName = pdfPath;
-                }
-                else
-                {
-                    using (var dlg = new PrintDialog { Document = pd })
-                    {
-                        if (dlg.ShowDialog(parent) != DialogResult.OK) return;
-                    }
-                }
-
-                pd.PrintPage += Pd_PrintPage;
-                _aktualniRadek = 0;
-                _vnitrniRadekIndex = 0;
-                _strana = 0;
-                pd.Print();
-            }
-        }
-
-        private void Pd_PrintPage(object sender, PrintPageEventArgs e)
-        {
-            var g = e.Graphics;
-            _strana++;
-
-            // Margins
-            float marginL = e.MarginBounds.Left;
-            float marginT = e.MarginBounds.Top;
-            float width = e.MarginBounds.Width;
-            float height = e.MarginBounds.Height;
-            float marginR = e.MarginBounds.Right;
-            float marginB = e.MarginBounds.Bottom;
-
-            // Barvy
-            var navy = Color.FromArgb(16, 35, 63);
-            var teal = Color.FromArgb(23, 176, 160);
-            var oranzova = Color.FromArgb(230, 140, 0);
-
-            if (_strana == 1)
-            {
-                // Vykreslíme titulní stranu
-                g.Clear(Color.White);
-
-                // Levý dekorační panel (navy)
-                using (var b = new SolidBrush(navy))
-                {
-                    g.FillRectangle(b, 0, 0, 60, e.PageBounds.Height);
-                }
-                // Levý tenký proužek (teal)
-                using (var b = new SolidBrush(teal))
-                {
-                    g.FillRectangle(b, 60, 0, 6, e.PageBounds.Height);
-                }
-
-                float startX = 100;
-                float startY = 200;
-
-                using (var fTag = new Font("Segoe UI", 12f, FontStyle.Bold))
-                using (var bTeal = new SolidBrush(teal))
-                {
-                    g.DrawString("SPECIFIKACE PROJEKTU", fTag, bTeal, startX, startY);
-                }
-
-                startY += 30;
-                string nazev = string.IsNullOrWhiteSpace(_projekt.Nazev) ? "Nový projekt" : _projekt.Nazev.Trim();
-                using (var fTitle = new Font("Segoe UI", 26f, FontStyle.Bold))
-                using (var bNavy = new SolidBrush(navy))
-                {
-                    // Zabalíme název, kdyby byl moc dlouhý
-                    VykresliOdstavec(g, nazev, fTitle, bNavy, startX, startY, e.PageBounds.Width - startX - 50, 6);
-                }
-
-                startY += 100;
-                using (var fSub = new Font("Segoe UI", 12f, FontStyle.Italic))
-                using (var bGray = new SolidBrush(Color.Gray))
-                {
-                    g.DrawString("Strukturovaný technický brief a analýza požadavků", fSub, bGray, startX, startY);
-                }
-
-                startY = e.PageBounds.Height - 220;
-                using (var fLabel = new Font("Segoe UI", 9.5f, FontStyle.Bold))
-                using (var fVal = new Font("Segoe UI", 9.5f, FontStyle.Regular))
-                using (var bNavy = new SolidBrush(navy))
-                using (var bGray = new SolidBrush(Color.DimGray))
-                {
-                    g.DrawString("Verze specifikace:", fLabel, bNavy, startX, startY);
-                    g.DrawString(_projekt.Verze.ToString(), fVal, bGray, startX + 130, startY);
-
-                    g.DrawString("Datum vygenerování:", fLabel, bNavy, startX, startY + 22);
-                    g.DrawString(DateTime.Now.ToString("d. M. yyyy"), fVal, bGray, startX + 130, startY + 22);
-
-                    g.DrawString("Typ / Šablona:", fLabel, bNavy, startX, startY + 44);
-                    g.DrawString(SpecSluzba.VratNazevTypu(_projekt.TypProjektuKlic), fVal, bGray, startX + 130, startY + 44);
-
-                    g.DrawString("Nástroj:", fLabel, bNavy, startX, startY + 66);
-                    g.DrawString("CodePlanner (AI-Powered)", fVal, bGray, startX + 130, startY + 66);
-                }
-
-                e.HasMorePages = true;
-                return;
-            }
-
-            // Následující stránky s obsahem
-            g.Clear(Color.White);
-
-            // Záhlaví
-            using (var fHead = new Font("Segoe UI", 8.5f, FontStyle.Regular))
-            using (var bGray = new SolidBrush(Color.Gray))
-            using (var pen = new Pen(Color.FromArgb(220, 224, 230), 0.75f))
-            {
-                string headText = $"Specifikace projektu: {(_projekt.Nazev ?? "nový projekt")}";
-                g.DrawString(headText, fHead, bGray, marginL, marginT - 25);
-                g.DrawLine(pen, marginL, marginT - 12, marginR, marginT - 12);
-            }
-
-            // Zápatí
-            using (var fFoot = new Font("Segoe UI", 8.5f, FontStyle.Regular))
-            using (var bGray = new SolidBrush(Color.Gray))
-            {
-                string footText = $"Strana {_strana}";
-                var size = g.MeasureString(footText, fFoot);
-                g.DrawString(footText, fFoot, bGray, marginL + (width - size.Width) / 2, marginB + 15);
-            }
-
-            float currentY = marginT;
-            using (var fH2 = new Font("Segoe UI Semibold", 13f, FontStyle.Bold))
-            using (var fH3 = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold))
-            using (var fText = new Font("Segoe UI", 9.5f, FontStyle.Regular))
-            using (var bNavy = new SolidBrush(navy))
-            using (var bBlack = new SolidBrush(Color.FromArgb(33, 37, 41)))
-            {
-                while (_aktualniRadek < _radky.Count)
-                {
-                    string radekRaw = _radky[_aktualniRadek];
-                    string radek = radekRaw.TrimEnd();
-
-                    // Určíme font a parametry podle typu řádku
-                    Font font = fText;
-                    Brush brush = bBlack;
-                    float indent = 0;
-                    float maxSirka = width;
-                    float radekSpacing = 3;
-                    bool isHeader = false;
-                    bool isBullet = false;
-                    bool isQuote = false;
-
-                    if (radek.StartsWith("## "))
-                    {
-                        font = fH2;
-                        brush = bNavy;
-                        isHeader = true;
-                        radekRaw = radekRaw.Substring(3);
-                    }
-                    else if (radek.StartsWith("### "))
-                    {
-                        font = fH3;
-                        brush = bNavy;
-                        isHeader = true;
-                        radekRaw = radekRaw.Substring(4);
-                    }
-                    else if (radek.StartsWith("- "))
-                    {
-                        font = fText;
-                        brush = bBlack;
-                        isBullet = true;
-                        indent = 18;
-                        maxSirka = width - 18;
-                        radekRaw = radekRaw.Substring(2);
-                    }
-                    else if (radek.StartsWith("> "))
-                    {
-                        font = fText;
-                        brush = bBlack;
-                        isQuote = true;
-                        indent = 12;
-                        maxSirka = width - 20;
-                        radekRaw = radekRaw.Substring(2);
-                    }
-
-                    if (radek.Length == 0)
-                    {
-                        // Prázdný řádek
-                        float h = 10;
-                        if (currentY + h > marginB && currentY > marginT)
-                        {
-                            e.HasMorePages = true;
-                            return;
-                        }
-                        currentY += h;
-                        _aktualniRadek++;
-                        _vnitrniRadekIndex = 0;
-                        continue;
-                    }
-
-                    // Pokud je to nadpis, přidáme trochu horního odsazení na začátku odstavce
-                    if (isHeader && _vnitrniRadekIndex == 0)
-                    {
-                        float extraSpace = radek.StartsWith("## ") ? 10 : 4;
-                        if (currentY + extraSpace > marginB)
-                        {
-                            e.HasMorePages = true;
-                            return;
-                        }
-                        currentY += extraSpace;
-                    }
-
-                    // Zabalíme text na řádky
-                    var zabalene = ZabalText(g, radekRaw, font, maxSirka);
-
-                    while (_vnitrniRadekIndex < zabalene.Count)
-                    {
-                        string z = zabalene[_vnitrniRadekIndex];
-                        float lineH = font.Height + radekSpacing;
-
-                        // U citace nebo odrážky na začátku odstavce (první řádek) kreslíme odrážku / levý okraj
-                        float extraHeight = 0;
-                        if (isQuote) extraHeight = 8; // padding nahoru/dolů
-                        if (isBullet && _vnitrniRadekIndex == 0) extraHeight = 4;
-
-                        if (currentY + lineH + extraHeight > marginB && currentY > marginT)
-                        {
-                            e.HasMorePages = true;
-                            return;
-                        }
-
-                        // Kreslení speciálních prvků pro citaci nebo odrážku
-                        if (isQuote)
-                        {
-                            using (var pozadi = new SolidBrush(Color.FromArgb(245, 247, 250)))
-                            using (var linka = new SolidBrush(oranzova))
-                            using (var fItalic = new Font(font.FontFamily, font.Size, FontStyle.Italic))
-                            using (var bGray = new SolidBrush(Color.FromArgb(60, 60, 60)))
-                            {
-                                // Pozadí pro tento řádek citace
-                                g.FillRectangle(pozadi, marginL, currentY, width, lineH);
-                                g.FillRectangle(linka, marginL, currentY, 3, lineH);
-                                g.DrawString(z, fItalic, bGray, marginL + indent, currentY + 2);
-                            }
-                        }
-                        else if (isBullet && _vnitrniRadekIndex == 0)
-                        {
-                            g.SmoothingMode = SmoothingMode.AntiAlias;
-                            using (var bTeal = new SolidBrush(teal))
-                            {
-                                g.FillEllipse(bTeal, marginL + 4, currentY + (font.Height - 5) / 2, 5, 5);
-                            }
-                            g.DrawString(z, font, brush, marginL + indent, currentY);
-                        }
-                        else
-                        {
-                            g.DrawString(z, font, brush, marginL + indent, currentY);
-                        }
-
-                        currentY += lineH;
-                        _vnitrniRadekIndex++;
-                    }
-
-                    // Dokončili jsme odstavec
-                    _aktualniRadek++;
-                    _vnitrniRadekIndex = 0;
-                }
-            }
-
-            e.HasMorePages = false;
-        }
-
-        private static List<string> ZabalText(Graphics g, string text, Font font, float maxSirka)
-        {
-            var lines = new List<string>();
-            var words = text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length == 0) return new List<string> { "" };
-
-            var currentLine = new StringBuilder();
-
-            foreach (var word in words)
-            {
-                string testLine = currentLine.Length == 0 ? word : currentLine + " " + word;
-                var size = g.MeasureString(testLine, font);
-                if (size.Width > maxSirka && currentLine.Length > 0)
-                {
-                    lines.Add(currentLine.ToString());
-                    currentLine.Clear().Append(word);
-                }
-                else
-                {
-                    currentLine.Append(currentLine.Length == 0 ? word : " " + word);
-                }
-            }
-
-            if (currentLine.Length > 0)
-            {
-                lines.Add(currentLine.ToString());
-            }
-
-            return lines;
-        }
-
-        private static float ZmerVyskuOdstavce(Graphics g, string text, Font font, float maxSirka, float radekSpacing = 3)
-        {
-            float y = 0;
-            foreach (var radek in text.Split('\n'))
-            {
-                var zabalene = ZabalText(g, radek, font, maxSirka);
-                y += zabalene.Count * (font.Height + radekSpacing);
-            }
-            return y;
-        }
-
-        private static float VykresliOdstavec(Graphics g, string text, Font font, Brush brush, float x, float y, float maxSirka, float radekSpacing = 3)
-        {
-            float startY = y;
-            foreach (var radek in text.Split('\n'))
-            {
-                var zabalene = ZabalText(g, radek, font, maxSirka);
-                foreach (var z in zabalene)
-                {
-                    g.DrawString(z, font, brush, x, y);
-                    y += font.Height + radekSpacing;
-                }
-            }
-            return y - startY;
-        }
-    }
-
-    public class UserStoriesForm : Form
-    {
-        private readonly List<UserStory> _stories;
-        private readonly string _apiKey;
-        private readonly string _model;
-        private readonly SpecProjekt _projekt;
-        private readonly Action _onZmena;
-
-        private ListBox lstStories;
-        private RichTextBox rtbDetail;
-        private Label lblStatus;
-        private Button btnAiStories;
-        private Button btnExportMd;
-        private Button btnExportCsv;
-
-        public UserStoriesForm(List<UserStory> stories, string apiKey, string model, SpecProjekt projekt, Action onZmena)
-        {
-            _stories = stories;
-            _apiKey = apiKey;
-            _model = model;
-            _projekt = projekt;
-            _onZmena = onZmena;
-
-            Text = "Uživatelské příběhy (User Stories)";
-            Size = new Size(850, 580);
-            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            StartPosition = FormStartPosition.CenterParent;
-            MinimizeBox = false;
-            MaximizeBox = true;
-            ShowIcon = false;
-            Font = new Font("Segoe UI", 9.5f);
-
-            PostavUI();
-            NaplnStories();
-        }
-
-        private void PostavUI()
-        {
-            var navy = Color.FromArgb(16, 35, 63);
-            var teal = Color.FromArgb(23, 176, 160);
-            var pozadi = Color.FromArgb(245, 247, 250);
-
-            // 1. Hlavička
-            var pnlHeader = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 60,
-                BackColor = navy
-            };
-            var lblTitle = new Label
-            {
-                Text = "💡 Uživatelské příběhy (User Stories / Backlog)",
-                Font = new Font("Segoe UI Semibold", 13f, FontStyle.Bold),
-                ForeColor = Color.White,
-                Location = new Point(16, 16),
-                AutoSize = true
-            };
-            pnlHeader.Controls.Add(lblTitle);
-
-            // 2. Dolní lišta s tlačítky
-            var pnlFooter = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 54,
-                BackColor = Color.White
-            };
-
-            lblStatus = new Label
-            {
-                Text = "Načteno",
-                ForeColor = Color.DimGray,
-                Location = new Point(16, 18),
-                AutoSize = true
-            };
-
-            btnAiStories = new Button
-            {
-                Text = "🤖 Generovat přes Gemini",
-                Height = 32,
-                AutoSize = true,
-                BackColor = navy,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9.5f)
-            };
-            btnAiStories.FlatAppearance.BorderSize = 0;
-            btnAiStories.Click += BtnAiStories_Click;
-
-            if (string.IsNullOrWhiteSpace(_apiKey))
-            {
-                btnAiStories.Enabled = false;
-                btnAiStories.Text = "🤖 Generovat (chybí API klíč)";
-            }
-
-            btnExportMd = new Button
-            {
-                Text = "⬇ Export Markdown…",
-                Height = 32,
-                Width = 135,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = navy,
-                Cursor = Cursors.Hand
-            };
-            btnExportMd.FlatAppearance.BorderColor = teal;
-            btnExportMd.Click += BtnExportMd_Click;
-
-            btnExportCsv = new Button
-            {
-                Text = "⬇ Export CSV (Jira/Trello)…",
-                Height = 32,
-                Width = 175,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = navy,
-                Cursor = Cursors.Hand
-            };
-            btnExportCsv.FlatAppearance.BorderColor = teal;
-            btnExportCsv.Click += BtnExportCsv_Click;
-
-            var btnZavrit = new Button
-            {
-                Text = "Zavřít",
-                Height = 32,
-                Width = 80,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnZavrit.FlatAppearance.BorderColor = Color.Silver;
-            btnZavrit.Click += (s, e) => Close();
-
-            var flowButtons = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Right,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Width = 580,
-                Padding = new Padding(0, 10, 10, 0)
-            };
-            flowButtons.Controls.Add(btnAiStories);
-            flowButtons.Controls.Add(btnExportMd);
-            flowButtons.Controls.Add(btnExportCsv);
-            flowButtons.Controls.Add(btnZavrit);
-
-            pnlFooter.Controls.Add(flowButtons);
-            pnlFooter.Controls.Add(lblStatus);
-
-            // 3. Středová část – SplitContainer
-            var split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                SplitterDistance = 250,
-                BackColor = pozadi
-            };
-
-            lstStories = new ListBox
-            {
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.5f),
-                IntegralHeight = false
-            };
-            lstStories.SelectedIndexChanged += LstStories_SelectedIndexChanged;
-            split.Panel1.Controls.Add(lstStories);
-
-            rtbDetail = new RichTextBox
-            {
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
-                ReadOnly = true,
-                BackColor = Color.White,
-                Font = new Font("Segoe UI", 10f),
-                Padding = new Padding(12)
-            };
-            split.Panel2.Controls.Add(rtbDetail);
-
-            Controls.Add(split);
-            Controls.Add(pnlHeader);
-            Controls.Add(pnlFooter);
-        }
-
-        private void NaplnStories()
-        {
-            lstStories.BeginUpdate();
-            lstStories.Items.Clear();
-            foreach (var s in _stories)
-            {
-                string prioritaTag = s.Priorita == "Vysoká" ? "🔴 " : (s.Priorita == "Střední" ? "🟡 " : "🟢 ");
-                lstStories.Items.Add($"{prioritaTag}{s.Id}: {s.Titulek}");
-            }
-            lstStories.EndUpdate();
-
-            if (_stories.Count > 0)
-            {
-                lstStories.SelectedIndex = 0;
-                lblStatus.Text = $"Načteno {_stories.Count} User Stories.";
-                btnExportMd.Enabled = true;
-                btnExportCsv.Enabled = true;
-            }
-            else
-            {
-                rtbDetail.Text = "Zatím nebyly vygenerovány žádné User Stories.\n\nKlikněte na tlačítko \"🤖 Generovat přes Gemini\" pro vytvoření agilního backlogu na základě aktuální specifikace.";
-                lblStatus.Text = "Žádné User Stories k dispozici.";
-                btnExportMd.Enabled = false;
-                btnExportCsv.Enabled = false;
-            }
-        }
-
-        private void LstStories_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            int idx = lstStories.SelectedIndex;
-            if (idx < 0 || idx >= _stories.Count)
-            {
-                return;
-            }
-
-            var s = _stories[idx];
-            rtbDetail.Clear();
-
-            // Vykreslíme detail s barvami
-            rtbDetail.SelectionFont = new Font("Segoe UI Semibold", 13f, FontStyle.Bold);
-            rtbDetail.SelectionColor = Color.FromArgb(16, 35, 63);
-            rtbDetail.AppendText($"{s.Id}: {s.Titulek}\n\n");
-
-            rtbDetail.SelectionFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            rtbDetail.SelectionColor = Color.DimGray;
-            rtbDetail.AppendText("Priorita: ");
-            rtbDetail.SelectionFont = new Font("Segoe UI", 9.5f, FontStyle.Regular);
-            rtbDetail.SelectionColor = s.Priorita == "Vysoká" ? Color.Red : (s.Priorita == "Střední" ? Color.DarkGoldenrod : Color.Green);
-            rtbDetail.AppendText($"{s.Priorita}\n\n");
-
-            rtbDetail.SelectionFont = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold);
-            rtbDetail.SelectionColor = Color.FromArgb(16, 35, 63);
-            rtbDetail.AppendText("Uživatelský příběh (User Story)\n");
-            
-            rtbDetail.SelectionFont = new Font("Segoe UI", 10f, FontStyle.Italic);
-            rtbDetail.SelectionColor = Color.FromArgb(50, 50, 50);
-            rtbDetail.AppendText($"> {s.Popis}\n\n");
-
-            rtbDetail.SelectionFont = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold);
-            rtbDetail.SelectionColor = Color.FromArgb(16, 35, 63);
-            rtbDetail.AppendText("Akceptační kritéria (Acceptance Criteria)\n");
-
-            rtbDetail.SelectionFont = new Font("Segoe UI", 10f, FontStyle.Regular);
-            rtbDetail.SelectionColor = Color.Black;
-            foreach (var k in s.Kriteria)
-            {
-                rtbDetail.AppendText($"• {k}\n");
-            }
-        }
-
-        private async void BtnAiStories_Click(object sender, EventArgs e)
-        {
-            Cursor = Cursors.WaitCursor;
-            btnAiStories.Enabled = false;
-            btnAiStories.Text = "🤖 Generuji Stories...";
-            lblStatus.Text = "Volám Gemini API, chvíli strpení...";
-
-            try
-            {
-                var noveStories = await GeminiService.GenerujUserStoriesAsync(_apiKey, _model, _projekt);
-                if (this.IsDisposed || !this.Created) return;
-                _stories.Clear();
-                _stories.AddRange(noveStories);
-
-                // Zaznamenáme akci do logu
-                _projekt.Log.Add(new Rozhodnuti
-                {
-                    Cas = DateTime.Now,
-                    Akce = "User Stories",
-                    Detail = $"Vygenerováno {_stories.Count} uživatelských příběhů přes Gemini."
-                });
-
-                _onZmena(); // Uložíme změnu projektu (označíme dirty)
-                NaplnStories();
-                MessageBox.Show(this, $"Úspěšně vygenerováno {_stories.Count} User Stories.", "Generování dokončeno", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                if (this.IsDisposed || !this.Created) return;
-                MessageBox.Show(this, "Chyba při generování User Stories:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                lblStatus.Text = "Generování selhalo.";
-            }
-            finally
-            {
-                if (!this.IsDisposed && this.Created)
-                {
-                    btnAiStories.Text = "🤖 Generovat přes Gemini";
-                    btnAiStories.Enabled = !string.IsNullOrWhiteSpace(_apiKey);
-                    Cursor = Cursors.Default;
-                }
-            }
-        }
-
-        private void BtnExportMd_Click(object sender, EventArgs e)
-        {
-            using (var dlg = new SaveFileDialog
-            {
-                Title = "Export User Stories do Markdown",
-                Filter = "Markdown (*.md)|*.md",
-                FileName = "user_stories_" + MainForm.BezpecnyNazevSouboru(_projekt.Nazev, "projekt") + ".md"
-            })
-            {
-                if (dlg.ShowDialog(this) == DialogResult.OK)
-                {
-                    try
-                    {
-                        ExportujMarkdown(dlg.FileName);
-                        MessageBox.Show(this, "Markdown export dokončen:\n\n" + dlg.FileName, "Export dokončen", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show(this, "Export selhal:\n\n" + ex.Message, "Chyba", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-            }
-        }
-
-        private void BtnExportCsv_Click(object sender, EventArgs e)
-        {
-            using (var dlg = new SaveFileDialog
-            {
-                Title = "Export User Stories do CSV",
-                Filter = "CSV soubory (*.csv)|*.csv",
-                FileName = "user_stories_" + MainForm.BezpecnyNazevSouboru(_projekt.Nazev, "projekt") + ".csv"
-            })
-            {
-                if (dlg.ShowDialog(this) == DialogResult.OK)
-                {
-                    try
-                    {
-                        ExportujCsv(dlg.FileName);
-                        MessageBox.Show(this, "CSV export dokončen (soubor lze importovat do Jira/Trello):\n\n" + dlg.FileName, "Export dokončen", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show(this, "Export selhal:\n\n" + ex.Message, "Chyba", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-            }
-        }
-
-        private void ExportujCsv(string soubor)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("Issue ID,Summary,Description,Priority");
-            foreach (var s in _stories)
-            {
-                string id = EscapeCsv(s.Id);
-                string sum = EscapeCsv(s.Titulek);
-                
-                var descBuilder = new StringBuilder();
-                descBuilder.AppendLine(s.Popis);
-                descBuilder.AppendLine();
-                descBuilder.AppendLine("Akceptační kritéria:");
-                foreach (var k in s.Kriteria)
-                {
-                    descBuilder.AppendLine($"- {k}");
-                }
-                string desc = EscapeCsv(descBuilder.ToString());
-                string prio = EscapeCsv(s.Priorita);
-
-                sb.AppendLine($"{id},{sum},{desc},{prio}");
-            }
-            File.WriteAllText(soubor, sb.ToString(), Encoding.UTF8);
-        }
-
-        private void ExportujMarkdown(string soubor)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"# User Stories pro projekt: {_projekt.Nazev}");
-            sb.AppendLine($"Datum vygenerování: {DateTime.Now:d. M. yyyy}");
-            sb.AppendLine();
-            foreach (var s in _stories)
-            {
-                sb.AppendLine($"## {s.Id}: {s.Titulek}");
-                sb.AppendLine($"**Priorita:** {s.Priorita}");
-                sb.AppendLine();
-                sb.AppendLine($"> {s.Popis}");
-                sb.AppendLine();
-                sb.AppendLine("### Akceptační kritéria:");
-                foreach (var k in s.Kriteria)
-                {
-                    sb.AppendLine($"- [ ] {k}");
-                }
-                sb.AppendLine();
-                sb.AppendLine("---");
-                sb.AppendLine();
-            }
-            File.WriteAllText(soubor, sb.ToString(), Encoding.UTF8);
-        }
-
-        private static string EscapeCsv(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return "";
-            if (text.Contains("\"") || text.Contains(",") || text.Contains("\n") || text.Contains("\r"))
-            {
-                return "\"" + text.Replace("\"", "\"\"") + "\"";
-            }
-            return text;
-        }
-    }
-
-    public class MetrikyForm : Form
-    {
-        private readonly ProjektMetriky _metriky;
-        private readonly string _apiKey;
-        private readonly string _model;
-        private readonly SpecProjekt _projekt;
-        private readonly Action _onZmena;
-
-        private Label lblCasOdhaduVal;
-        private Label lblKomplexitaVal;
-        private Label lblRozpocetVal;
-        private Label lblSlozeniVal;
-        private RichTextBox rtbRozbor;
-        private RichTextBox rtbRizika;
-        private Label lblStatus;
-        private Button btnAiMetriky;
-        private Button btnCopy;
-
-        public MetrikyForm(ProjektMetriky metriky, string apiKey, string model, SpecProjekt projekt, Action onZmena)
-        {
-            _metriky = metriky;
-            _apiKey = apiKey;
-            _model = model;
-            _projekt = projekt;
-            _onZmena = onZmena;
-
-            Text = "Metriky a odhad projektu";
-            Size = new Size(820, 580);
-            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            StartPosition = FormStartPosition.CenterParent;
-            MinimumSize = new Size(600, 400);
-            ShowInTaskbar = false;
-            MinimizeBox = false;
-            MaximizeBox = true;
-            Font = new Font("Segoe UI", 9.5f);
-
-            var mainLayout = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 3,
-                Padding = new Padding(0)
-            };
-            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));  // Header
-            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // Content split
-            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));  // Bottom action bar
-
-            // Header panel (Navy)
-            var pnlHeader = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(16, 35, 63) // Navy
-            };
-            var lblTitle = new Label
-            {
-                Text = "📊 AI Odhad a projektové metriky",
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI Semibold", 12f, FontStyle.Bold),
-                Dock = DockStyle.Left,
-                Width = 400,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(12, 0, 0, 0)
-            };
-            pnlHeader.Controls.Add(lblTitle);
-
-            // Split Container
-            var split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Orientation = Orientation.Vertical,
-                SplitterDistance = 320,
-                BorderStyle = BorderStyle.None
-            };
-
-            // LEVÝ PANEL: vizuální vizitka a hlavní metriky
-            var pnlLeft = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 5,
-                Padding = new Padding(12),
-                BackColor = Color.FromArgb(245, 247, 250)
-            };
-
-            float scale = (float)this.DeviceDpi / 96f;
-            int cardHeight = (int)(65 * scale);
-            pnlLeft.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
-            pnlLeft.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
-            pnlLeft.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
-            pnlLeft.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
-            pnlLeft.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-            Panel VytvorCard(string label, out Label valLabel)
-            {
-                var card = new Panel
-                {
-                    Dock = DockStyle.Fill,
-                    BackColor = Color.White,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    Margin = new Padding(0, 0, 0, 8),
-                    Padding = new Padding(8)
-                };
-
-                var lblName = new Label
-                {
-                    Text = label,
-                    ForeColor = Color.DimGray,
-                    Font = new Font("Segoe UI", 8.5f * scale, FontStyle.Bold),
-                    Dock = DockStyle.Top,
-                    Height = (int)(18 * scale)
-                };
-
-                valLabel = new Label
-                {
-                    ForeColor = Color.FromArgb(16, 35, 63),
-                    Font = new Font("Segoe UI Semibold", 11f * scale, FontStyle.Bold),
-                    Dock = DockStyle.Fill,
-                    TextAlign = ContentAlignment.MiddleLeft
-                };
-
-                card.Controls.Add(valLabel);
-                card.Controls.Add(lblName);
-                return card;
-            }
-
-            pnlLeft.Controls.Add(VytvorCard("ODHADOVANÁ DOBA VÝVOJE", out lblCasOdhaduVal), 0, 0);
-            pnlLeft.Controls.Add(VytvorCard("SLOŽITOST PROJEKTU", out lblKomplexitaVal), 0, 1);
-            pnlLeft.Controls.Add(VytvorCard("DOPORUČENÝ ROZPOČET", out lblRozpocetVal), 0, 2);
-            pnlLeft.Controls.Add(VytvorCard("SLOŽENÍ TÝMU", out lblSlozeniVal), 0, 3);
-
-            split.Panel1.Controls.Add(pnlLeft);
-
-            // PRAVÝ PANEL: technický rozbor a rizika
-            var tabContent = new TabControl
-            {
-                Dock = DockStyle.Fill
-            };
-
-            var tabRozbor = new TabPage("🔧 Technický rozbor a architektura");
-            rtbRozbor = new RichTextBox
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.75f),
-                Padding = new Padding(8)
-            };
-            tabRozbor.Controls.Add(rtbRozbor);
-
-            var tabRizika = new TabPage("⚠ Odhadovaná rizika projektu");
-            rtbRizika = new RichTextBox
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.75f),
-                Padding = new Padding(8)
-            };
-            tabRizika.Controls.Add(rtbRizika);
-
-            tabContent.TabPages.Add(tabRozbor);
-            tabContent.TabPages.Add(tabRizika);
-
-            split.Panel2.Controls.Add(tabContent);
-
-            // Bottom bar
-            var pnlBottom = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(235, 238, 242),
-                Padding = new Padding(6)
-            };
-
-            lblStatus = new Label
-            {
-                Dock = DockStyle.Left,
-                Width = 350,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Color.DimGray,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Italic)
-            };
-
-            btnAiMetriky = new Button
-            {
-                Text = "🤖 Spočítat odhad přes AI",
-                Width = 200,
-                Dock = DockStyle.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(16, 35, 63), // Navy
-                ForeColor = Color.White,
-                Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold)
-            };
-            btnAiMetriky.FlatAppearance.BorderSize = 0;
-            btnAiMetriky.Click += BtnAiMetriky_Click;
-
-            btnCopy = new Button
-            {
-                Text = "📋 Kopírovat text",
-                Width = 140,
-                Dock = DockStyle.Right,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = Color.FromArgb(16, 35, 63),
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            btnCopy.FlatAppearance.BorderColor = Color.Silver;
-            btnCopy.Click += BtnCopy_Click;
-
-            pnlBottom.Controls.Add(lblStatus);
-            pnlBottom.Controls.Add(btnCopy);
-            pnlBottom.Controls.Add(btnAiMetriky);
-
-            mainLayout.Controls.Add(pnlHeader, 0, 0);
-            mainLayout.Controls.Add(split, 0, 1);
-            mainLayout.Controls.Add(pnlBottom, 0, 2);
-
-            Controls.Add(mainLayout);
-
-            if (string.IsNullOrWhiteSpace(_apiKey))
-            {
-                btnAiMetriky.Enabled = false;
-                btnAiMetriky.Text = "🤖 Spočítat odhad (chybí API klíč)";
-            }
-
-            NaplnMetriky();
-        }
-
-        private void NaplnMetriky()
-        {
-            if (_metriky == null || _metriky.CasVypoctu == default)
-            {
-                lblCasOdhaduVal.Text = "Zatím nespočítáno";
-                lblKomplexitaVal.Text = "Zatím nespočítáno";
-                lblRozpocetVal.Text = "Zatím nespočítáno";
-                lblSlozeniVal.Text = "Zatím nespočítáno";
-                rtbRozbor.Text = "Klikněte na tlačítko 'Spočítat odhad přes AI' pro asynchronní analýzu specifikace a backlogu pomocí Gemini API.";
-                rtbRizika.Text = "Seznam rizik bude vygenerován spolu s odhadem.";
-                lblStatus.Text = "Odhad dosud nebyl vygenerován.";
-                btnCopy.Enabled = false;
-                return;
-            }
-
-            btnCopy.Enabled = true;
-            lblCasOdhaduVal.Text = $"{_metriky.CasovyOdhadMin} až {_metriky.CasovyOdhadMax}";
-            lblKomplexitaVal.Text = _metriky.Komplexita;
-            
-            // Barevné odlišení komplexity
-            if (_metriky.Komplexita.Contains("Vysoká"))
-                lblKomplexitaVal.ForeColor = Color.Crimson;
-            else if (_metriky.Komplexita.Contains("Střední"))
-                lblKomplexitaVal.ForeColor = Color.DarkGoldenrod;
-            else
-                lblKomplexitaVal.ForeColor = Color.Green;
-
-            lblRozpocetVal.Text = _metriky.DoporucenyRozpocet;
-            lblSlozeniVal.Text = _metriky.SlozeniTymu;
-
-            rtbRozbor.Text = _metriky.TechnickyRozbor;
-            
-            rtbRizika.Clear();
-            if (_metriky.RizikaMetriky != null && _metriky.RizikaMetriky.Count > 0)
-            {
-                foreach (var r in _metriky.RizikaMetriky)
-                {
-                    rtbRizika.AppendText($"• {r}\n\n");
-                }
-            }
-            else
-            {
-                rtbRizika.Text = "Nebyly definovány žádné specifické hrozby.";
-            }
-
-            lblStatus.Text = $"Odhad aktualizován: {_metriky.CasVypoctu:d. M. yyyy v H:mm}";
-        }
-
-        private async void BtnAiMetriky_Click(object sender, EventArgs e)
-        {
-            Cursor = Cursors.WaitCursor;
-            btnAiMetriky.Enabled = false;
-            btnAiMetriky.Text = "⏳ Počítám...";
-            lblStatus.Text = "Počítám odhad pomocí Gemini API...";
-
-            try
-            {
-                var noveMetriky = await GeminiService.GenerujMetrikyAsync(_apiKey, _model, _projekt);
-                if (this.IsDisposed || !this.Created) return;
-                
-                _metriky.CasovyOdhadMin = noveMetriky.CasovyOdhadMin;
-                _metriky.CasovyOdhadMax = noveMetriky.CasovyOdhadMax;
-                _metriky.Komplexita = noveMetriky.Komplexita;
-                _metriky.DoporucenyRozpocet = noveMetriky.DoporucenyRozpocet;
-                _metriky.SlozeniTymu = noveMetriky.SlozeniTymu;
-                _metriky.TechnickyRozbor = noveMetriky.TechnickyRozbor;
-                _metriky.RizikaMetriky = noveMetriky.RizikaMetriky;
-                _metriky.CasVypoctu = DateTime.Now;
-
-                _projekt.Log.Add(new Rozhodnuti
-                {
-                    Cas = DateTime.Now,
-                    Akce = "Projektové metriky",
-                    Detail = $"AI odhad pracnosti: {_metriky.CasovyOdhadMin} až {_metriky.CasovyOdhadMax} (komplexita: {_metriky.Komplexita})."
-                });
-
-                _onZmena();
-                NaplnMetriky();
-                MessageBox.Show(this, "AI analýza a odhad projektu byly úspěšně dokončeny.", "Odhad hotov", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                if (this.IsDisposed || !this.Created) return;
-                MessageBox.Show(this, "Výpočet odhadu selhal:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                lblStatus.Text = "Výpočet selhal.";
-            }
-            finally
-            {
-                if (!this.IsDisposed && this.Created)
-                {
-                    btnAiMetriky.Enabled = !string.IsNullOrWhiteSpace(_apiKey);
-                    btnAiMetriky.Text = "🤖 Spočítat odhad přes AI";
-                    Cursor = Cursors.Default;
-                }
-            }
-        }
-
-        private void BtnCopy_Click(object sender, EventArgs e)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("=== METRIKY A ODHAD PROJEKTU ===");
-            sb.AppendLine($"Projekt: {_projekt.Nazev}");
-            sb.AppendLine($"Odhad času: {_metriky.CasovyOdhadMin} až {_metriky.CasovyOdhadMax}");
-            sb.AppendLine($"Složitost: {_metriky.Komplexita}");
-            sb.AppendLine($"Doporučený rozpočet: {_metriky.DoporucenyRozpocet}");
-            sb.AppendLine($"Doporučené složení týmu: {_metriky.SlozeniTymu}");
-            sb.AppendLine();
-            sb.AppendLine("--- Technický rozbor ---");
-            sb.AppendLine(_metriky.TechnickyRozbor);
-            sb.AppendLine();
-            sb.AppendLine("--- Odhadovaná rizika ---");
-            foreach (var r in _metriky.RizikaMetriky)
-            {
-                sb.AppendLine($"- {r}");
-            }
-
-            try
-            {
-                Clipboard.SetText(sb.ToString());
-                MessageBox.Show(this, "Celý text odhadu byl zkopírován do schránky.", "Zkopírováno", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Nepodařilo se kopírovat do schránky:\n\n" + ex.Message, "Chyba", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-    }
 }

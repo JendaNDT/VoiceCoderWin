@@ -1,73 +1,57 @@
-# CodePlanner
+# CodePlanner v2.0
 
-Windows aplikace (.exe), která z volně popsaného nápadu udělá strukturovanou,
-verzovanou specifikaci připravenou pro kódovacího agenta.
+Windows aplikace (.exe), která z volně popsaného nápadu udělá strukturovanou, verzovanou specifikaci a agilní backlog připravený pro kódovací agenty.
 
-Demonstrátor projektu **CodePlanner AI** – první krok podle kap. 18 návrhu
-(„malý demonstrátor bez automatického kódování"). Bez AI, plně offline.
+Aplikace využívá **Gemini API** k hluboké sémantické analýze, automatickému generování uživatelských příběhů (User Stories), odhadu pracnosti a rizik a hlasovému diktování.
 
-## Co umí (v0.1)
+## Hlavní funkce (v2.0)
 
-- Zápis nápadu textem, nebo diktováním Windows (Win+H)
-- 10 řízených otázek seřazených podle dopadu (platforma, offline, osobní údaje, non-goals, akceptace…)
-- „Nevím" → viditelně označený **[PŘEDPOKLAD]** místo tichého odhadu
-- Živá specifikace se 7 bloky (Cíl a uživatelé, Rozsah, UX, Data, Technika, Akceptace, Rizika)
-- Verzování a log každého rozhodnutí
-- Export **Markdown** (pro člověka) a **JSON** (stabilní struktura pro agenta)
-- Ukládání projektu jako `.vcbrief`
-
-## Novinky ve v0.3
-
-- **Kontrola konzistence** (kap. 7): 9 pravidel hlídá rozpory ve specifikaci – offline vs. cloud,
-  osobní údaje vs. „bez osobních údajů", non-goals popsané jako funkce, vágní akceptační kritéria,
-  odmítnutý export zmíněný jinde, desktop vs. mobil, moc předpokladů s vysokým dopadem…
-- Nálezy se ukazují v barevném pruhu nad náhledem (klik = detail) a jdou i do exportů
-  (MD sekce `Kontrola konzistence`, JSON pole `kontrolaKonzistence`)
-- Kontrola je orientační – porovnává klíčová slova, nechápe význam
-
-## Novinky ve v0.2
-
-- Formátovaný náhled specifikace (nadpisy, odrážky, oranžově zvýrazněné **[PŘEDPOKLAD]**)
-- Barevné stavy otázek (✔ zodpovězeno, ≈ předpoklad, ○ čeká) a štítek dopadu V/S
-- Progress bar postupu
-- Klávesové zkratky: Ctrl+N/O/S, Ctrl+M (export MD), Ctrl+J (export JSON), Ctrl+Enter (uložit odpověď)
-- Hvězdička v titulku při neuložených změnách, roztahovatelný log, ostřejší DPI (PerMonitorV2)
+- **Interaktivní tvorba specifikace**: Zápis nápadu textem, nebo diktováním přímo v aplikaci (s vizuálním indikátorem nahrávání a automatickým přepisem).
+- **AI Asistent (Chat)**: Integrovaný chat s kontextem aktuálního projektu pro ladění detailů.
+- **Doplňující otázky na míru**: Gemini navrhne otázky specifické pro váš nápad, včetně rychlých voleb odpovědí.
+- **Hloubková AI kontrola konzistence**: Odhalování logických rozporů a bezpečnostních děr pomocí LLM.
+- **Generování User Stories**: Automatické rozpadnutí specifikace na agilní backlog (exportovatelný do Markdown a CSV pro Jira/Trello).
+- **Metriky a odhady**: AI odhad pracnosti (v hodinách), složitosti, složení týmu, doporučeného rozpočtu a technického rozboru.
+- **Robustní exporty**:
+  - **Markdown** (strukturovaný dokument pro čtení)
+  - **JSON** (v2.0 formát, stabilní struktura pro agenty)
+  - **HTML** (interaktivní dashboard s vyhledáváním a tmavým režimem, včetně backlogu a logu změn)
+  - **PDF** (profesionální tiskový export s titulní stranou a záhlavím/zápatím)
+- **Bezpečné uložení API klíče**: Možnost zadat klíč v rozhraní (přenáší se v hlavičkách `x-goog-api-key`, ne v URL) a otestovat připojení přímo v nastavení.
 
 ## Stažení a spuštění
 
-Hotové `CodePlanner.exe` najdeš v [Releases](../../releases). Nic se neinstaluje –
-stačí spustit (Windows 10/11, 64-bit). Při prvním spuštění projdi SmartScreen:
-**Další informace → Přesto spustit** (aplikace zatím není podepsaná).
+Hotové `CodePlanner.exe` najdeš v [Releases](../../releases). Aplikace je plně přenositelná (portable) – stačí ji spustit na Windows 10/11.
 
 ## Stavba ze zdrojáků
 
-Vyžaduje .NET 8 SDK (na Windows, Linuxu i macOS):
+Vyžaduje .NET 8 SDK:
 
 ```bash
 cd CodePlanner
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
 ```
 
-Testy jádra (běží i mimo Windows):
+Testy jádra (128 automatických kontrol):
 
 ```bash
 cd CoreTests
 dotnet run -c Release
 ```
 
-## Struktura
+## Struktura projektu
 
 | Cesta | Obsah |
 |---|---|
-| `CodePlanner/Core/SpecCore.cs` | Jádro: model, otázky, verzování, render MD/JSON |
-| `CodePlanner/MainForm.cs` | WinForms GUI |
-| `CoreTests/` | Automatické testy jádra (36 kontrol) |
-| `PROJECT_STATUS.md` | Živý stav projektu (vibecoding tracker) |
-
-## Roadmapa
-
-Viz `PROJECT_STATUS.md` – backlog zahrnuje napojení na Claude API (AI otázky),
-skutečné STT místo Win+H, consistency checker a podepsání exe.
+| `CodePlanner/Core/SpecCore.cs` | Jádro: model specifikace, šablony typů projektů, exporty MD/JSON/HTML |
+| `CodePlanner/Core/GeminiService.cs` | Komunikace s Gemini API a zpracování strukturovaných JSON odpovědí |
+| `CodePlanner/MainForm.cs` | Hlavní formulář a koordinátor GUI |
+| `CodePlanner/NalezyForm.cs` | Dialog kontroly konzistence a AI analýzy |
+| `CodePlanner/UserStoriesForm.cs` | Dialog backlogu, generování a exportu User Stories |
+| `CodePlanner/MetrikyForm.cs` | Dialog AI odhadů pracnosti a architektury |
+| `CodePlanner/PdfExporter.cs` | Modul pro tiskový export do PDF |
+| `CodePlanner/SettingsForm.cs` | Nastavení Gemini API s odkazem do AI Studio a testem připojení |
+| `CoreTests/` | 128 automatických jednotkových testů |
 
 ---
-*Vzniklo vibecodingem – nápad a směr: Jenda (JendaNDT), kód: Claude.*
+*Vzniklo v kooperaci člověka s AI (Antigravity).*

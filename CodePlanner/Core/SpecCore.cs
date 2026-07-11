@@ -553,6 +553,20 @@ namespace CodePlanner.Core
             "Cíl a uživatelé", "Rozsah", "UX", "Data", "Technika", "Akceptace", "Rizika"
         };
 
+        public static IEnumerable<string> VratVsechnySekce(SpecProjekt p)
+        {
+            var sekceProjektu = VratOtazkyProjektu(p).Select(o => o.Sekce).Distinct();
+            var list = new List<string>(PoradiSekci);
+            foreach (var s in sekceProjektu)
+            {
+                if (!string.IsNullOrWhiteSpace(s) && !list.Contains(s))
+                {
+                    list.Add(s);
+                }
+            }
+            return list;
+        }
+
         private static readonly JsonSerializerOptions JsonOpt = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -645,7 +659,7 @@ namespace CodePlanner.Core
             Zmena(p, "Předpoklad", ot.GetText(p.TypProjektuKlic) + " → [PŘEDPOKLAD] " + ot.GetVychoziPredpoklad(p.TypProjektuKlic));
         }
 
-        private static void Zmena(SpecProjekt p, string akce, string detail)
+        public static void Zmena(SpecProjekt p, string akce, string detail)
         {
             p.Verze++;
             p.Upraveno = DateTime.Now;
@@ -715,7 +729,7 @@ namespace CodePlanner.Core
                 sb.AppendLine();
             }
 
-            foreach (var sekce in PoradiSekci)
+            foreach (var sekce in VratVsechnySekce(p))
             {
                 sb.AppendLine("## " + sekce);
                 var otazkySekce = VratOtazkyProjektu(p).Where(o => o.Sekce == sekce).ToList();
@@ -755,7 +769,7 @@ namespace CodePlanner.Core
             }
 
             sb.AppendLine("## Souhrn stavu");
-            sb.AppendLine("- Zodpovězeno: " + PocetZodpovezenych(p) + " / " + Otazky.Vse.Count);
+            sb.AppendLine("- Zodpovězeno: " + PocetZodpovezenych(p) + " / " + VratOtazkyProjektu(p).Count());
             sb.AppendLine("- Označené předpoklady: " + PocetPredpokladu(p));
             sb.AppendLine("- Otevřené otázky: " + otevrene.Count);
             sb.AppendLine();
@@ -774,14 +788,14 @@ namespace CodePlanner.Core
         public static string RenderJson(SpecProjekt p)
         {
             var sekce = new List<object>();
-            foreach (var nazevSekce in PoradiSekci)
+            foreach (var nazevSekce in VratVsechnySekce(p))
             {
                 var polozky = new List<object>();
-                foreach (var ot in Otazky.Vse.Where(o => o.Sekce == nazevSekce))
+                foreach (var ot in VratOtazkyProjektu(p).Where(o => o.Sekce == nazevSekce))
                 {
                     var odp = OdpovedNa(p, ot.Id);
                     if (odp == null) continue;
-                    polozky.Add(new { id = ot.Id, otazka = ot.GetText(p.TypProjektu), odpoved = odp.Text, predpoklad = odp.JePredpoklad });
+                    polozky.Add(new { id = ot.Id, otazka = ot.GetText(p.TypProjektuKlic), odpoved = odp.Text, predpoklad = odp.JePredpoklad });
                 }
                 sekce.Add(new { nazev = nazevSekce, polozky });
             }
@@ -789,7 +803,7 @@ namespace CodePlanner.Core
             var data = new
             {
                 nastroj = "CodePlanner",
-                verzeNastroje = "0.9.0",
+                verzeNastroje = "2.0.0",
                 projekt = p.Nazev,
                 typProjektu = p.TypProjektuKlic,
                 typProjektuNazev = VratNazevTypu(p.TypProjektuKlic),
@@ -885,8 +899,19 @@ namespace CodePlanner.Core
             sb.AppendLine("        .backlog-criteria-item { list-style-type: square; margin-bottom: 2px; }");
             sb.AppendLine("        .completed .backlog-title { text-decoration: line-through; color: var(--text-light); }");
             sb.AppendLine("    </style>");
-            sb.AppendLine("</head>");
             sb.AppendLine("<body>");
+            sb.AppendLine("    <script>");
+            sb.AppendLine("        (function() {");
+            sb.AppendLine("            const savedTheme = localStorage.getItem('theme');");
+            sb.AppendLine("            let theme = 'light';");
+            sb.AppendLine("            if (savedTheme) {");
+            sb.AppendLine("                theme = savedTheme;");
+            sb.AppendLine("            } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {");
+            sb.AppendLine("                theme = 'dark';");
+            sb.AppendLine("            }");
+            sb.AppendLine("            document.body.setAttribute('data-theme', theme);");
+            sb.AppendLine("        })();");
+            sb.AppendLine("    </script>");
             sb.AppendLine("    <div class=\"container\">");
             sb.AppendLine("        <header>");
             sb.AppendLine($"            <h1>Specifikace: {System.Net.WebUtility.HtmlEncode(nazev)}</h1>");
@@ -919,7 +944,7 @@ namespace CodePlanner.Core
             sb.AppendLine("                </div>");
             sb.AppendLine();
 
-            foreach (var sekce in PoradiSekci)
+            foreach (var sekce in VratVsechnySekce(p))
             {
                 var otazkySekce = VratOtazkyProjektu(p).Where(o => o.Sekce == sekce).ToList();
                 var odpovezene = otazkySekce.Where(o => OdpovedNa(p, o.Id) != null).ToList();
@@ -988,9 +1013,10 @@ namespace CodePlanner.Core
                 sb.AppendLine("                    <div class=\"card-title\">Agilní backlog</div>");
                 foreach (var us in p.UserStories)
                 {
+                    string safeId = new string((us.Id ?? "").Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_').ToArray());
                     string prioClass = us.Priorita == "Vysoká" ? "prio-high" : (us.Priorita == "Střední" ? "prio-med" : "prio-low");
-                    sb.AppendLine($"                    <div class=\"backlog-item\" id=\"story-{us.Id}\">");
-                    sb.AppendLine($"                        <input type=\"checkbox\" class=\"backlog-checkbox\" onchange=\"toggleStory(this, 'story-{us.Id}')\">");
+                    sb.AppendLine($"                    <div class=\"backlog-item\" id=\"story-{safeId}\">");
+                    sb.AppendLine($"                        <input type=\"checkbox\" class=\"backlog-checkbox\" onchange=\"toggleStory(this, 'story-{safeId}')\">");
                     sb.AppendLine("                        <div class=\"backlog-text\">");
                     sb.AppendLine($"                            <div class=\"backlog-title\">{System.Net.WebUtility.HtmlEncode(us.Id)}: {System.Net.WebUtility.HtmlEncode(us.Titulek)} <span class=\"badge badge-prio badge-{prioClass}\">{System.Net.WebUtility.HtmlEncode(us.Priorita)}</span></div>");
                     sb.AppendLine($"                            <div class=\"backlog-desc\">{System.Net.WebUtility.HtmlEncode(us.Popis)}</div>");
@@ -1003,6 +1029,22 @@ namespace CodePlanner.Core
                     sb.AppendLine("                        </div>");
                     sb.AppendLine("                    </div>");
                 }
+            }
+
+            // Záznam rozhodnutí (Log)
+            if (p.Log != null && p.Log.Count > 0)
+            {
+                sb.AppendLine("                <div class=\"card filterable-section\">");
+                sb.AppendLine("                    <div class=\"card-title\">Záznam rozhodnutí (Log)</div>");
+                sb.AppendLine("                    <div style=\"font-size:0.85rem; max-height:250px; overflow-y:auto;\">");
+                foreach (var log in p.Log)
+                {
+                    sb.AppendLine("                        <div style=\"margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px;\">");
+                    sb.AppendLine($"                            <span style=\"color:var(--text-light); font-weight:500;\">{log.Cas:d. M. yyyy v H:mm}</span> - <strong>{System.Net.WebUtility.HtmlEncode(log.Akce)}</strong><br>");
+                    sb.AppendLine($"                            <span style=\"color:var(--text);\">{System.Net.WebUtility.HtmlEncode(log.Detail)}</span>");
+                    sb.AppendLine("                        </div>");
+                }
+                sb.AppendLine("                    </div>");
                 sb.AppendLine("                </div>");
                 sb.AppendLine();
             }
@@ -1012,10 +1054,17 @@ namespace CodePlanner.Core
             sb.AppendLine("    </div>");
             sb.AppendLine();
             sb.AppendLine("    <script>");
+            sb.AppendLine("        document.addEventListener('DOMContentLoaded', () => {");
+            sb.AppendLine("            const theme = document.body.getAttribute('data-theme');");
+            sb.AppendLine("            document.getElementById('theme-icon').innerText = theme === 'dark' ? '☀' : '🌙';");
+            sb.AppendLine("            document.getElementById('theme-label').innerText = theme === 'dark' ? 'Světlý režim' : 'Tmavý režim';");
+            sb.AppendLine("        });");
+            sb.AppendLine();
             sb.AppendLine("        function toggleTheme() {");
             sb.AppendLine("            const body = document.body;");
             sb.AppendLine("            const theme = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';");
             sb.AppendLine("            body.setAttribute('data-theme', theme);");
+            sb.AppendLine("            localStorage.setItem('theme', theme);");
             sb.AppendLine("            document.getElementById('theme-icon').innerText = theme === 'dark' ? '☀' : '🌙';");
             sb.AppendLine("            document.getElementById('theme-label').innerText = theme === 'dark' ? 'Světlý režim' : 'Tmavý režim';");
             sb.AppendLine("        }");
@@ -1088,6 +1137,15 @@ namespace CodePlanner.Core
         {
             var text = File.ReadAllText(cesta);
             var p = JsonSerializer.Deserialize<SpecProjekt>(text, JsonOpt);
+            if (p != null)
+            {
+                if (p.Odpovedi == null) p.Odpovedi = new List<Odpoved>();
+                if (p.Log == null) p.Log = new List<Rozhodnuti>();
+                if (p.Otazky == null) p.Otazky = new List<Otazka>();
+                if (p.UserStories == null) p.UserStories = new List<UserStory>();
+                if (p.ChatHistory == null) p.ChatHistory = new List<ChatMessage>();
+                if (p.Metriky == null) p.Metriky = new ProjektMetriky();
+            }
             return p ?? new SpecProjekt();
         }
     }

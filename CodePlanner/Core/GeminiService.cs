@@ -106,9 +106,6 @@ namespace CodePlanner.Core
         }
     }
 
-    /// <summary>
-    /// Výsledek strukturované analýzy nápadu z Gemini API.
-    /// </summary>
     public class GeminiAnalizaVysledek
     {
         [JsonPropertyName("nazev")]
@@ -224,7 +221,7 @@ namespace CodePlanner.Core
         static GeminiService()
         {
             Client = new HttpClient();
-            Client.Timeout = TimeSpan.FromSeconds(30);
+            Client.Timeout = TimeSpan.FromSeconds(90);
         }
 
         private static string CleanJson(string rawJson)
@@ -237,6 +234,113 @@ namespace CodePlanner.Core
             return clean.Trim();
         }
 
+        public static async Task TestPripojeniAsync(string apiKey, string model)
+        {
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new ArgumentException("API klíč nesmí být prázdný.");
+
+            var requestBody = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new[]
+                        {
+                            new { text = "Say 'OK' and nothing else." }
+                        }
+                    }
+                }
+            };
+
+            await PosliGeminiRequestAsync(apiKey, model, requestBody, default);
+        }
+
+        private static async Task<string> PosliGeminiRequestAsync(string apiKey, string model, object requestBody, CancellationToken cancellationToken)
+        {
+            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
+            string requestJson = JsonSerializer.Serialize(requestBody);
+
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
+            requestMessage.Headers.Add("x-goog-api-key", apiKey);
+            requestMessage.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+
+            try
+            {
+                var response = await Client.SendAsync(requestMessage, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errContent = "";
+                    try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
+                    
+                    string friendlyMsg = null;
+                    if (!string.IsNullOrEmpty(errContent))
+                    {
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(errContent);
+                            if (doc.RootElement.TryGetProperty("error", out var errorProp))
+                            {
+                                if (errorProp.TryGetProperty("message", out var msgProp))
+                                {
+                                    string origMsg = msgProp.GetString();
+                                    if (origMsg != null)
+                                    {
+                                        if (origMsg.Contains("API key not valid") || origMsg.Contains("API_KEY_INVALID") || origMsg.Contains("key is invalid"))
+                                        {
+                                            friendlyMsg = "Zadaný API klíč je neplatný. Ověřte prosím správnost klíče v Nastavení AI.";
+                                        }
+                                        else if (origMsg.Contains("Quota exceeded") || origMsg.Contains("RESOURCE_EXHAUSTED") || origMsg.Contains("429"))
+                                        {
+                                            friendlyMsg = "Byl překročen limit požadavků (Quota Exceeded / Rate Limit). Zkuste to prosím znovu za minutu.";
+                                        }
+                                        else
+                                        {
+                                            friendlyMsg = $"Chyba API: {origMsg}";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (friendlyMsg == null)
+                    {
+                        friendlyMsg = $"Gemini API vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}).";
+                        if (!string.IsNullOrEmpty(errContent)) friendlyMsg += $" Detail: {errContent}";
+                    }
+                    throw new Exception(friendlyMsg);
+                }
+
+                string responseJson = await response.Content.ReadAsStringAsync();
+                return ZiskejTextZCandidate(responseJson);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("Požadavek na Gemini API vypršel. Zkontrolujte prosím připojení k internetu a stav Gemini služby.", ex);
+            }
+        }
+
+        private static string ZiskejTextZCandidate(string responseJson)
+        {
+            using var doc = JsonDocument.Parse(responseJson);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
+                throw new Exception("V odpovědi Gemini API chybí kandidáti (candidates).");
+
+            var firstCandidate = candidates[0];
+            if (!firstCandidate.TryGetProperty("content", out var content) || 
+                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
+                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
+
+            var firstPart = parts[0];
+            if (!firstPart.TryGetProperty("text", out var textProp))
+                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
+
+            return textProp.GetString() ?? "";
+        }
+
         public static string SestavPrompt(string napad, string typProjektuKlic, string referencniText = null, bool maMockup = false)
         {
             var sb = new StringBuilder();
@@ -246,7 +350,7 @@ namespace CodePlanner.Core
             sb.AppendLine("2. Seznam 7 až 10 doplňujících specifikačních otázek, které jsou ŠITÉ NA MÍRU tomuto konkrétnímu projektu a technické doméně.");
             sb.AppendLine();
             sb.AppendLine("Pravidla pro otázky:");
-            sb.AppendLine("- Každá otázka musí patřit do jedné z těchto sekcí: Cíl a uživatelé, Rozsah, UX, Data, Technika, Akceptace, Rizika.");
+            sb.AppendLine("- Každá otázka must patřit do jedné z těchto sekcí: Cíl a uživatelé, Rozsah, UX, Data, Technika, Akceptace, Rizika.");
             sb.AppendLine("- Otázky musí být konkrétní (např. u fitness aplikace se ptej na senzory/API, u e-shopu na platby, ne obecně).");
             sb.AppendLine("- Každá otázka musí mít stanovený dopad (Vysoky pro architekturu/cenu/bezpečnost, Stredni pro UX/detaily).");
             sb.AppendLine("- Pokud je to možné, použij pro příslušné otázky následující standardní identifikátory (IDs):");
@@ -323,8 +427,6 @@ namespace CodePlanner.Core
             if (string.IsNullOrWhiteSpace(napad))
                 throw new ArgumentException("Nápad k analýze nesmí být prázdný.");
 
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
-
             var partsList = new List<object>
             {
                 new { text = SestavPrompt(napad, typProjektuKlic, referencniText, !string.IsNullOrWhiteSpace(mockupBase64)) }
@@ -357,41 +459,11 @@ namespace CodePlanner.Core
                 }
             };
 
-            string requestJson = JsonSerializer.Serialize(requestBody);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await Client.PostAsync(url, requestContent, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                string errContent = "";
-                try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
-                throw new Exception($"Gemini API vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}). Detail: {errContent}");
-            }
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(responseJson);
-            
-            // Extrakce textu z odpovědi Gemini API
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí kandidáti (candidates).");
-
-            var firstCandidate = candidates[0];
-            if (!firstCandidate.TryGetProperty("content", out var content) || 
-                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
-
-            var firstPart = parts[0];
-            if (!firstPart.TryGetProperty("text", out var textProp))
-                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
-
-            string textResponse = textProp.GetString();
+            string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
             if (string.IsNullOrWhiteSpace(textResponse))
                 throw new Exception("Odpověď z Gemini API je prázdná.");
 
-            // Vyčištění případného markdownu, pokud by ho model přesto vrátil
             string cleanText = CleanJson(textResponse);
-
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiDynamickyVysledek>(cleanText, opt);
 
@@ -399,25 +471,6 @@ namespace CodePlanner.Core
                 throw new Exception("Nepodařilo se parsovat JSON výsledek z Gemini API.");
 
             return vysledek;
-        }
-
-        public static string SestavPrompt(string napad, TypProjektu typ, string referencniText = null)
-            => SestavPrompt(napad, typ.ToString(), referencniText);
-
-        public static async Task<GeminiAnalizaVysledek> AnalyzujNapadAsync(string apiKey, string model, string napad, TypProjektu typ, string referencniText = null, CancellationToken cancellationToken = default)
-        {
-            var dyn = await AnalyzujNapadAsync(apiKey, model, napad, typ.ToString(), referencniText, null, null, cancellationToken);
-            var res = new GeminiAnalizaVysledek
-            {
-                Nazev = dyn.Nazev,
-                Odpovedi = dyn.Otazky.Select(o => new GeminiOdpoved
-                {
-                    OtazkaId = o.Id,
-                    Text = o.Odpoved,
-                    JePredpoklad = o.JePredpoklad
-                }).ToList()
-            };
-            return res;
         }
 
         public static async Task<string> PrepisAudioAsync(string apiKey, string model, string cestaWav, CancellationToken cancellationToken = default)
@@ -430,8 +483,6 @@ namespace CodePlanner.Core
 
             byte[] audioBytes = File.ReadAllBytes(cestaWav);
             string base64Audio = Convert.ToBase64String(audioBytes);
-
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
             var requestBody = new
             {
@@ -458,34 +509,7 @@ namespace CodePlanner.Core
                 }
             };
 
-            string requestJson = JsonSerializer.Serialize(requestBody);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await Client.PostAsync(url, requestContent, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                string errContent = "";
-                try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
-                throw new Exception($"Gemini API při přepisu vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}). Detail: {errContent}");
-            }
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(responseJson);
-            
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí kandidáti (candidates).");
-
-            var firstCandidate = candidates[0];
-            if (!firstCandidate.TryGetProperty("content", out var content) || 
-                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
-
-            var firstPart = parts[0];
-            if (!firstPart.TryGetProperty("text", out var textProp))
-                return "";
-
-            string textResponse = textProp.GetString();
+            string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
             return textResponse?.Trim() ?? "";
         }
 
@@ -493,8 +517,6 @@ namespace CodePlanner.Core
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
-
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
             var sb = new StringBuilder();
             sb.AppendLine("Jsi expert na softwarovou architekturu a analýzu požadavků.");
@@ -538,36 +560,8 @@ namespace CodePlanner.Core
                 }
             };
 
-            string requestJson = JsonSerializer.Serialize(requestBody);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await Client.PostAsync(url, requestContent, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                string errContent = "";
-                try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
-                throw new Exception($"Gemini API při analýze konzistence vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}). Detail: {errContent}");
-            }
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(responseJson);
-            
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí kandidáti.");
-
-            var firstCandidate = candidates[0];
-            if (!firstCandidate.TryGetProperty("content", out var content) ||
-                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
-
-            var firstPart = parts[0];
-            if (!firstPart.TryGetProperty("text", out var textProp))
-                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
-
-            string textResponseRaw = textProp.GetString();
-
-            string cleanText = CleanJson(textResponseRaw);
+            string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
+            string cleanText = CleanJson(textResponse);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiKonzistenceVysledek>(cleanText, opt);
@@ -593,8 +587,6 @@ namespace CodePlanner.Core
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
-
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
             var sb = new StringBuilder();
             sb.AppendLine("Jsi agilní kouč a softwarový analytik.");
@@ -644,36 +636,8 @@ namespace CodePlanner.Core
                 }
             };
 
-            string requestJson = JsonSerializer.Serialize(requestBody);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await Client.PostAsync(url, requestContent, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                string errContent = "";
-                try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
-                throw new Exception($"Gemini API při generování User Stories vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}). Detail: {errContent}");
-            }
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(responseJson);
-            
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí kandidáti.");
-
-            var firstCandidate = candidates[0];
-            if (!firstCandidate.TryGetProperty("content", out var content) ||
-                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
-
-            var firstPart = parts[0];
-            if (!firstPart.TryGetProperty("text", out var textProp))
-                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
-
-            string textResponseRaw = textProp.GetString();
-
-            string cleanText = CleanJson(textResponseRaw);
+            string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
+            string cleanText = CleanJson(textResponse);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var vysledek = JsonSerializer.Deserialize<GeminiUserStoriesVysledek>(cleanText, opt);
@@ -702,8 +666,6 @@ namespace CodePlanner.Core
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
 
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
-
             string specMarkdown = SpecSluzba.RenderMarkdown(projekt);
             string systemPrompt = "Jsi zkušený softwarový architekt, agilní kouč a seniorní vývojář. Odpovídáš na dotazy ohledně navrhovaného projektu.\n\n" +
                                  "Zde je kompletní specifikace projektu, která je tvým jediným zdrojem pravdy o cílech a parametrech systému. Všechny své odpovědi přizpůsob tomuto kontextu:\n\n" +
@@ -719,10 +681,9 @@ namespace CodePlanner.Core
                     new { text = msg.Text }
                 };
 
-                // Pokud má projekt mockup a je to první uživatelská zpráva chatu, přiložíme jej do kontextu
                 if (i == 0 && string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(projekt.MockupBase64))
                 {
-                    string mime = (projekt.MockupNazev != null && (projekt.MockupNazev.EndsWith(".jpg") || projekt.MockupNazev.EndsWith(".jpeg"))) ? "image/jpeg" : "image/png";
+                    string mime = (projekt.MockupNazev != null && (projekt.MockupNazev.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || projekt.MockupNazev.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
                     parts.Add(new
                     {
                         inlineData = new
@@ -752,44 +713,13 @@ namespace CodePlanner.Core
                 contents = turnsList.ToArray()
             };
 
-            string requestJson = JsonSerializer.Serialize(requestBody);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await Client.PostAsync(url, requestContent, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                string errContent = "";
-                try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
-                throw new Exception($"Gemini API při odeslání zprávy vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}). Detail: {errContent}");
-            }
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(responseJson);
-            
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí kandidáti.");
-
-            var firstCandidate = candidates[0];
-            if (!firstCandidate.TryGetProperty("content", out var content) ||
-                !content.TryGetProperty("parts", out var resParts) || resParts.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
-
-            var firstPart = resParts[0];
-            if (!firstPart.TryGetProperty("text", out var textProp))
-                return "";
-
-            string textResponse = textProp.GetString();
-
-            return textResponse?.Trim() ?? "";
+            return await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
         }
 
         public static async Task<ProjektMetriky> GenerujMetrikyAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
-
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
             var sb = new StringBuilder();
             sb.AppendLine("Jsi seniorní projektový manažer, IT architekt a odhadce softwarových projektů.");
@@ -837,35 +767,7 @@ namespace CodePlanner.Core
                 }
             };
 
-            string requestJson = JsonSerializer.Serialize(requestBody);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await Client.PostAsync(url, requestContent, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                string errContent = "";
-                try { errContent = await response.Content.ReadAsStringAsync(); } catch { }
-                throw new Exception($"Gemini API při odhadu metrik vrátilo chybu {(int)response.StatusCode} ({response.ReasonPhrase}). Detail: {errContent}");
-            }
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(responseJson);
-
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí kandidáti.");
-
-            var firstCandidate = candidates[0];
-            if (!firstCandidate.TryGetProperty("content", out var content) ||
-                !content.TryGetProperty("parts", out var parts) || parts.GetArrayLength() == 0)
-                throw new Exception("V odpovědi Gemini API chybí obsah kandidáta (content.parts).");
-
-            var firstPart = parts[0];
-            if (!firstPart.TryGetProperty("text", out var textProp))
-                throw new Exception("Odpověď z Gemini API neobsahuje textové pole.");
-
-            string textResponse = textProp.GetString();
-
+            string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
             string cleanText = CleanJson(textResponse);
 
             var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -884,6 +786,7 @@ namespace CodePlanner.Core
             };
         }
     }
+
 
     public class GeminiMetrikyVysledek
     {
