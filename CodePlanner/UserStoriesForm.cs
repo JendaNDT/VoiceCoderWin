@@ -14,7 +14,7 @@ namespace CodePlanner
         private readonly List<UserStory> _stories;
         private readonly string _apiKey;
         private readonly string _model;
-        private readonly SpecProjekt _projekt;
+        private readonly ProjectSpecification _project;
         private readonly Action _onZmena;
 
         private ListBox lstStories;
@@ -25,26 +25,13 @@ namespace CodePlanner
         private Button btnExportCsv;
         private CancellationTokenSource _cts = null;
 
-        // Cachované fonty k zamezení GDI leaků
-        private Font _fTitle;
-        private Font _fBold;
-        private Font _fItalic;
-        private Font _fRegular;
-        private Font _fHeader105;
-
-        public UserStoriesForm(List<UserStory> stories, string apiKey, string model, SpecProjekt projekt, Action onZmena)
+        public UserStoriesForm(List<UserStory> stories, string apiKey, string model, ProjectSpecification project, Action onZmena)
         {
             _stories = stories;
             _apiKey = apiKey;
             _model = model;
-            _projekt = projekt;
+            _project = project;
             _onZmena = onZmena;
-
-            _fTitle = new Font("Segoe UI Semibold", 13f, FontStyle.Bold);
-            _fBold = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            _fItalic = new Font("Segoe UI", 10f, FontStyle.Italic);
-            _fRegular = new Font("Segoe UI", 10f, FontStyle.Regular);
-            _fHeader105 = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold);
 
             Text = "Uživatelské příběhy (User Stories)";
             Size = new Size(850, 580);
@@ -54,39 +41,27 @@ namespace CodePlanner
             MinimizeBox = false;
             MaximizeBox = true;
             ShowIcon = false;
-            Font = new Font("Segoe UI", 9.5f);
+            Font = DesignSystem.Body;
+            BackColor = DesignSystem.SvetlePozadi;
+            ForeColor = DesignSystem.Navy;
 
             PostavUI();
             NaplnStories();
-
-            this.FormClosing += (s, e) =>
-            {
-                this.Font?.Dispose();
-                _fTitle?.Dispose();
-                _fBold?.Dispose();
-                _fItalic?.Dispose();
-                _fRegular?.Dispose();
-                _fHeader105?.Dispose();
-            };
         }
 
         private void PostavUI()
         {
-            var navy = Color.FromArgb(16, 35, 63);
-            var teal = Color.FromArgb(23, 176, 160);
-            var pozadi = Color.FromArgb(245, 247, 250);
-
             // 1. Hlavička
             var pnlHeader = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 60,
-                BackColor = navy
+                BackColor = DesignSystem.Navy
             };
             var lblTitle = new Label
             {
                 Text = "💡 Uživatelské příběhy (User Stories / Backlog)",
-                Font = new Font("Segoe UI Semibold", 13f, FontStyle.Bold),
+                Font = DesignSystem.HeaderLarge,
                 ForeColor = Color.White,
                 Location = new Point(16, 16),
                 AutoSize = true
@@ -104,9 +79,10 @@ namespace CodePlanner
             lblStatus = new Label
             {
                 Text = "Načteno",
-                ForeColor = Color.DimGray,
+                ForeColor = DesignSystem.SedaText,
                 Location = new Point(16, 18),
-                AutoSize = true
+                AutoSize = true,
+                Font = DesignSystem.Body
             };
 
             btnAiStories = new Button
@@ -114,11 +90,11 @@ namespace CodePlanner
                 Text = "🤖 Generovat přes Gemini",
                 Height = 32,
                 AutoSize = true,
-                BackColor = navy,
+                BackColor = DesignSystem.Navy,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9.5f)
+                Font = DesignSystem.BodyBold
             };
             btnAiStories.FlatAppearance.BorderSize = 0;
             btnAiStories.Click += BtnAiStories_Click;
@@ -135,10 +111,11 @@ namespace CodePlanner
                 Height = 32,
                 Width = 135,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = navy,
-                Cursor = Cursors.Hand
+                ForeColor = DesignSystem.Navy,
+                Cursor = Cursors.Hand,
+                Font = DesignSystem.Body
             };
-            btnExportMd.FlatAppearance.BorderColor = teal;
+            btnExportMd.FlatAppearance.BorderColor = DesignSystem.Teal;
             btnExportMd.Click += BtnExportMd_Click;
 
             btnExportCsv = new Button
@@ -147,10 +124,11 @@ namespace CodePlanner
                 Height = 32,
                 Width = 175,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = navy,
-                Cursor = Cursors.Hand
+                ForeColor = DesignSystem.Navy,
+                Cursor = Cursors.Hand,
+                Font = DesignSystem.Body
             };
-            btnExportCsv.FlatAppearance.BorderColor = teal;
+            btnExportCsv.FlatAppearance.BorderColor = DesignSystem.Teal;
             btnExportCsv.Click += BtnExportCsv_Click;
 
             var btnZavrit = new Button
@@ -159,7 +137,8 @@ namespace CodePlanner
                 Height = 32,
                 Width = 80,
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Font = DesignSystem.Body
             };
             btnZavrit.FlatAppearance.BorderColor = Color.Silver;
             btnZavrit.Click += (s, e) => Close();
@@ -188,14 +167,14 @@ namespace CodePlanner
             {
                 Dock = DockStyle.Fill,
                 SplitterDistance = 250,
-                BackColor = pozadi
+                BackColor = DesignSystem.SvetlePozadi
             };
 
             lstStories = new ListBox
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.5f),
+                Font = DesignSystem.Body,
                 IntegralHeight = false
             };
             lstStories.SelectedIndexChanged += LstStories_SelectedIndexChanged;
@@ -207,7 +186,7 @@ namespace CodePlanner
                 BorderStyle = BorderStyle.None,
                 ReadOnly = true,
                 BackColor = Color.White,
-                Font = new Font("Segoe UI", 10f),
+                Font = DesignSystem.Body,
                 Padding = new Padding(12)
             };
             split.Panel2.Controls.Add(rtbDetail);
@@ -223,8 +202,8 @@ namespace CodePlanner
             lstStories.Items.Clear();
             foreach (var s in _stories)
             {
-                string prioritaTag = s.Priorita == "Vysoká" ? "🔴 " : (s.Priorita == "Střední" ? "🟡 " : "🟢 ");
-                lstStories.Items.Add($"{prioritaTag}{s.Id}: {s.Titulek}");
+                string prioritaTag = s.Priority == "Vysoká" ? "🔴 " : (s.Priority == "Střední" ? "🟡 " : "🟢 ");
+                lstStories.Items.Add($"{prioritaTag}{s.Id}: {s.Title}");
             }
             lstStories.EndUpdate();
 
@@ -255,33 +234,33 @@ namespace CodePlanner
             var s = _stories[idx];
             rtbDetail.Clear();
 
-            // Vykreslíme detail s využitím cachovaných fontů
-            rtbDetail.SelectionFont = _fTitle;
-            rtbDetail.SelectionColor = Color.FromArgb(16, 35, 63);
-            rtbDetail.AppendText($"{s.Id}: {s.Titulek}\n\n");
+            // Vykreslíme detail s využitím static fontů z DesignSystem
+            rtbDetail.SelectionFont = DesignSystem.HeaderMedium;
+            rtbDetail.SelectionColor = DesignSystem.Navy;
+            rtbDetail.AppendText($"{s.Id}: {s.Title}\n\n");
 
-            rtbDetail.SelectionFont = _fBold;
-            rtbDetail.SelectionColor = Color.DimGray;
+            rtbDetail.SelectionFont = DesignSystem.BodyBold;
+            rtbDetail.SelectionColor = DesignSystem.SedaText;
             rtbDetail.AppendText("Priorita: ");
-            rtbDetail.SelectionFont = _fBold;
-            rtbDetail.SelectionColor = s.Priorita == "Vysoká" ? Color.Red : (s.Priorita == "Střední" ? Color.DarkGoldenrod : Color.Green);
-            rtbDetail.AppendText($"{s.Priorita}\n\n");
+            rtbDetail.SelectionFont = DesignSystem.BodyBold;
+            rtbDetail.SelectionColor = s.Priority == "Vysoká" ? DesignSystem.Cervena : (s.Priority == "Střední" ? DesignSystem.Oranzova : DesignSystem.Zelena);
+            rtbDetail.AppendText($"{s.Priority}\n\n");
 
-            rtbDetail.SelectionFont = _fHeader105;
-            rtbDetail.SelectionColor = Color.FromArgb(16, 35, 63);
+            rtbDetail.SelectionFont = DesignSystem.CardHeader;
+            rtbDetail.SelectionColor = DesignSystem.Navy;
             rtbDetail.AppendText("Uživatelský příběh (User Story)\n");
             
-            rtbDetail.SelectionFont = _fItalic;
+            rtbDetail.SelectionFont = DesignSystem.BodyItalic;
             rtbDetail.SelectionColor = Color.FromArgb(50, 50, 50);
-            rtbDetail.AppendText($"> {s.Popis}\n\n");
+            rtbDetail.AppendText($"> {s.Description}\n\n");
 
-            rtbDetail.SelectionFont = _fHeader105;
-            rtbDetail.SelectionColor = Color.FromArgb(16, 35, 63);
+            rtbDetail.SelectionFont = DesignSystem.CardHeader;
+            rtbDetail.SelectionColor = DesignSystem.Navy;
             rtbDetail.AppendText("Akceptační kritéria (Acceptance Criteria)\n");
 
-            rtbDetail.SelectionFont = _fRegular;
+            rtbDetail.SelectionFont = DesignSystem.Body;
             rtbDetail.SelectionColor = Color.Black;
-            foreach (var k in s.Kriteria)
+            foreach (var k in s.Criteria)
             {
                 rtbDetail.AppendText($"• {k}\n");
             }
@@ -303,16 +282,16 @@ namespace CodePlanner
 
             try
             {
-                var noveStories = await GeminiService.GenerujUserStoriesAsync(_apiKey, _model, _projekt, _cts.Token);
+                var noveStories = await GeminiService.GenerateUserStoriesAsync(_apiKey, _model, _project, _cts.Token);
                 if (this.IsDisposed || !this.Created) return;
                 _stories.Clear();
                 _stories.AddRange(noveStories);
 
                 // Zaznamenáme akci do logu
-                _projekt.Log.Add(new Rozhodnuti
+                _project.ChangeLog.Add(new DecisionLogEntry
                 {
-                    Cas = DateTime.Now,
-                    Akce = "User Stories",
+                    Timestamp = DateTime.Now,
+                    Action = "User Stories",
                     Detail = $"Vygenerováno {_stories.Count} uživatelských příběhů přes Gemini."
                 });
 
@@ -350,7 +329,7 @@ namespace CodePlanner
             {
                 Title = "Export User Stories do Markdown",
                 Filter = "Markdown (*.md)|*.md",
-                FileName = "user_stories_" + MainForm.BezpecnyNazevSouboru(_projekt.Nazev, "projekt") + ".md"
+                FileName = "user_stories_" + MainForm.BezpecnyNazevSouboru(_project.Name, "projekt") + ".md"
             })
             {
                 if (dlg.ShowDialog(this) == DialogResult.OK)
@@ -374,7 +353,7 @@ namespace CodePlanner
             {
                 Title = "Export User Stories do CSV",
                 Filter = "CSV soubory (*.csv)|*.csv",
-                FileName = "user_stories_" + MainForm.BezpecnyNazevSouboru(_projekt.Nazev, "projekt") + ".csv"
+                FileName = "user_stories_" + MainForm.BezpecnyNazevSouboru(_project.Name, "projekt") + ".csv"
             })
             {
                 if (dlg.ShowDialog(this) == DialogResult.OK)
@@ -399,18 +378,18 @@ namespace CodePlanner
             foreach (var s in _stories)
             {
                 string id = EscapeCsv(s.Id);
-                string sum = EscapeCsv(s.Titulek);
+                string sum = EscapeCsv(s.Title);
                 
                 var descBuilder = new StringBuilder();
-                descBuilder.AppendLine(s.Popis);
+                descBuilder.AppendLine(s.Description);
                 descBuilder.AppendLine();
                 descBuilder.AppendLine("Akceptační kritéria:");
-                foreach (var k in s.Kriteria)
+                foreach (var k in s.Criteria)
                 {
                     descBuilder.AppendLine($"- {k}");
                 }
                 string desc = EscapeCsv(descBuilder.ToString());
-                string prio = EscapeCsv(s.Priorita);
+                string prio = EscapeCsv(s.Priority);
 
                 sb.AppendLine($"{id},{sum},{desc},{prio}");
             }
@@ -420,18 +399,18 @@ namespace CodePlanner
         private void ExportujMarkdown(string soubor)
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"# User Stories pro projekt: {_projekt.Nazev}");
+            sb.AppendLine($"# User Stories pro projekt: {_project.Name}");
             sb.AppendLine($"Datum vygenerování: {DateTime.Now:d. M. yyyy}");
             sb.AppendLine();
             foreach (var s in _stories)
             {
-                sb.AppendLine($"## {s.Id}: {s.Titulek}");
-                sb.AppendLine($"**Priorita:** {s.Priorita}");
+                sb.AppendLine($"## {s.Id}: {s.Title}");
+                sb.AppendLine($"**Priorita:** {s.Priority}");
                 sb.AppendLine();
-                sb.AppendLine($"> {s.Popis}");
+                sb.AppendLine($"> {s.Description}");
                 sb.AppendLine();
                 sb.AppendLine("### Akceptační kritéria:");
-                foreach (var k in s.Kriteria)
+                foreach (var k in s.Criteria)
                 {
                     sb.AppendLine($"- [ ] {k}");
                 }

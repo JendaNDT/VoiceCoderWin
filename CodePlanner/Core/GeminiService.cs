@@ -14,54 +14,57 @@ namespace CodePlanner.Core
     /// <summary>
     /// Model nastavení pro Gemini API, ukládaný v uživatelském profilu.
     /// </summary>
-    public class GeminiNastaveni
+    /// <summary>
+    /// Model nastavení pro Gemini API, ukládaný v uživatelském profilu.
+    /// </summary>
+    public class GeminiSettings
     {
         public string GeminiApiKey { get; set; } = "";
         public string GeminiModel { get; set; } = "gemini-2.5-flash";
-        public List<string> NedavneProjekty { get; set; } = new List<string>();
+        public List<string> RecentProjects { get; set; } = new List<string>();
 
-        public void PridejNedavnyProjekt(string cesta)
+        public void AddRecentProject(string cesta)
         {
             if (string.IsNullOrWhiteSpace(cesta)) return;
 
-            if (NedavneProjekty == null)
+            if (RecentProjects == null)
             {
-                NedavneProjekty = new List<string>();
+                RecentProjects = new List<string>();
             }
 
-            NedavneProjekty.RemoveAll(x => string.Equals(x, cesta, StringComparison.OrdinalIgnoreCase));
-            NedavneProjekty.Insert(0, cesta);
+            RecentProjects.RemoveAll(x => string.Equals(x, cesta, StringComparison.OrdinalIgnoreCase));
+            RecentProjects.Insert(0, cesta);
 
-            if (NedavneProjekty.Count > 5)
+            if (RecentProjects.Count > 5)
             {
-                NedavneProjekty.RemoveRange(5, NedavneProjekty.Count - 5);
+                RecentProjects.RemoveRange(5, RecentProjects.Count - 5);
             }
 
-            Uloz();
+            Save();
         }
 
-        public void OdeberNedavnyProjekt(string cesta)
+        public void RemoveRecentProject(string cesta)
         {
-            if (string.IsNullOrWhiteSpace(cesta) || NedavneProjekty == null) return;
-            NedavneProjekty.RemoveAll(x => string.Equals(x, cesta, StringComparison.OrdinalIgnoreCase));
-            Uloz();
+            if (string.IsNullOrWhiteSpace(cesta) || RecentProjects == null) return;
+            RecentProjects.RemoveAll(x => string.Equals(x, cesta, StringComparison.OrdinalIgnoreCase));
+            Save();
         }
 
-        private static string ZiskejCestu()
+        private static string GetSettingsPath()
         {
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             return Path.Combine(appData, "CodePlanner", "settings.json");
         }
 
-        public static GeminiNastaveni Nacti()
+        public static GeminiSettings Load()
         {
             try
             {
-                string cesta = ZiskejCestu();
+                string cesta = GetSettingsPath();
                 if (File.Exists(cesta))
                 {
                     string json = File.ReadAllText(cesta);
-                    var nastaveni = JsonSerializer.Deserialize<GeminiNastaveni>(json);
+                    var nastaveni = JsonSerializer.Deserialize<GeminiSettings>(json);
                     if (nastaveni != null) return nastaveni;
                 }
             }
@@ -70,14 +73,14 @@ namespace CodePlanner.Core
                 // V případě chyby vrátíme výchozí nastavení
             }
 
-            return new GeminiNastaveni();
+            return new GeminiSettings();
         }
 
-        public void Uloz()
+        public void Save()
         {
             try
             {
-                string cesta = ZiskejCestu();
+                string cesta = GetSettingsPath();
                 string slozka = Path.GetDirectoryName(cesta);
                 if (!Directory.Exists(slozka))
                 {
@@ -95,7 +98,7 @@ namespace CodePlanner.Core
         }
 
         [JsonIgnore]
-        public string EfektivniApiKey
+        public string EffectiveApiKey
         {
             get
             {
@@ -106,88 +109,88 @@ namespace CodePlanner.Core
         }
     }
 
-    public class GeminiAnalizaVysledek
+    public class GeminiAnalysisResult
     {
         [JsonPropertyName("nazev")]
-        public string Nazev { get; set; } = "";
+        public string Name { get; set; } = "";
 
         [JsonPropertyName("odpovedi")]
-        public List<GeminiOdpoved> Odpovedi { get; set; } = new List<GeminiOdpoved>();
+        public List<GeminiAnswer> Answers { get; set; } = new List<GeminiAnswer>();
     }
 
     /// <summary>
     /// Jedna navržená odpověď z Gemini API.
     /// </summary>
-    public class GeminiOdpoved
+    public class GeminiAnswer
     {
         [JsonPropertyName("otazkaId")]
-        public string OtazkaId { get; set; } = "";
+        public string QuestionId { get; set; } = "";
 
         [JsonPropertyName("text")]
         public string Text { get; set; } = "";
 
         [JsonPropertyName("jePredpoklad")]
-        public bool JePredpoklad { get; set; }
+        public bool IsAssumption { get; set; }
     }
 
-    public class GeminiDynamickyVysledek
+    public class GeminiDynamicResult
     {
         [JsonPropertyName("nazev")]
-        public string Nazev { get; set; } = "";
+        public string Name { get; set; } = "";
 
         [JsonPropertyName("otazky")]
-        public List<GeminiDynamickaOtazka> Otazky { get; set; } = new List<GeminiDynamickaOtazka>();
+        public List<GeminiDynamicQuestion> Questions { get; set; } = new List<GeminiDynamicQuestion>();
     }
 
-    public class GeminiDynamickaOtazka
+    public class GeminiDynamicQuestion
     {
         [JsonPropertyName("id")]
         public string Id { get; set; } = "";
 
         [JsonPropertyName("sekce")]
-        public string Sekce { get; set; } = "";
+        public string Section { get; set; } = "";
 
         [JsonPropertyName("dopad")]
-        public string Dopad { get; set; } = "Stredni"; // Vysoky / Stredni
+        public string Impact { get; set; } = "Stredni"; // Vysoky / Stredni
 
         [JsonPropertyName("text")]
         public string Text { get; set; } = "";
 
         [JsonPropertyName("napoveda")]
-        public string Napoveda { get; set; } = "";
+        public string HelpText { get; set; } = "";
 
         [JsonPropertyName("vychoziPredpoklad")]
-        public string VychoziPredpoklad { get; set; } = "";
+        public string DefaultAssumption { get; set; } = "";
 
         [JsonPropertyName("odpoved")]
-        public string Odpoved { get; set; } = "";
+        public string Answer { get; set; } = "";
 
         [JsonPropertyName("jePredpoklad")]
-        public bool JePredpoklad { get; set; }
+        public bool IsAssumption { get; set; }
 
         [JsonPropertyName("moznosti")]
-        public List<string> Moznosti { get; set; } = new List<string>();
+        public List<string> Options { get; set; } = new List<string>();
     }
 
-    public class GeminiKonzistenceVysledek
+    public class GeminiConsistencyResult
     {
         [JsonPropertyName("nalezy")]
-        public List<GeminiKonzistenceNalez> Nalezy { get; set; } = new List<GeminiKonzistenceNalez>();
+        public List<GeminiConsistencyFinding> Findings { get; set; } = new List<GeminiConsistencyFinding>();
     }
 
-    public class GeminiKonzistenceNalez
+    public class GeminiConsistencyFinding
     {
         [JsonPropertyName("zavaznost")]
-        public string Zavaznost { get; set; } = "Varovani";
+        public string Severity { get; set; } = "Varovani";
 
         [JsonPropertyName("titulek")]
-        public string Titulek { get; set; } = "";
+        public string Title { get; set; } = "";
 
         [JsonPropertyName("detail")]
         public string Detail { get; set; } = "";
     }
 
-    public class GeminiUserStoriesVysledek
+    public class GeminiUserStoriesResult
     {
         [JsonPropertyName("stories")]
         public List<GeminiUserStory> Stories { get; set; } = new List<GeminiUserStory>();
@@ -199,16 +202,16 @@ namespace CodePlanner.Core
         public string Id { get; set; } = "";
 
         [JsonPropertyName("titulek")]
-        public string Titulek { get; set; } = "";
+        public string Title { get; set; } = "";
 
         [JsonPropertyName("popis")]
-        public string Popis { get; set; } = "";
+        public string Description { get; set; } = "";
 
         [JsonPropertyName("kriteria")]
-        public List<string> Kriteria { get; set; } = new List<string>();
+        public List<string> Criteria { get; set; } = new List<string>();
 
         [JsonPropertyName("priorita")]
-        public string Priorita { get; set; } = "Střední";
+        public string Priority { get; set; } = "Střední";
     }
 
     /// <summary>
@@ -287,7 +290,7 @@ namespace CodePlanner.Core
             return vysledek;
         }
 
-        public static async Task TestPripojeniAsync(string apiKey, string model)
+        public static async Task TestConnectionAsync(string apiKey, string model)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč nesmí být prázdný.");
@@ -436,9 +439,9 @@ namespace CodePlanner.Core
         {
             var sb = new StringBuilder();
             sb.AppendLine("Jsi expert na softwarovou analýzu a tvorbu zadání pro kódovací agenty.");
-            sb.AppendLine($"Tvým úkolem je analyzovat původní nápad uživatele na aplikaci typu \"{SpecSluzba.VratNazevTypu(typProjektuKlic)}\" a navrhnout:");
+            sb.AppendLine($"Tvým úkolem je analyzovat původní nápad uživatele na aplikaci typu \"{SpecificationService.GetProjectTypeName(typProjektuKlic)}\" a navrhnout:");
             sb.AppendLine("1. Krátký, výstižný název projektu (maximálně 5 slov).");
-            sb.AppendLine("2. Seznam 7 až 10 doplňujících specifikačních otázek, které jsou ŠITÉ NA MÍRU tomuto konkrétnímu projektu a technické doméně.");
+            sb.AppendLine("2. Seznam 7 až 10 doplňujících specifikačních otázek, které jsou ŠITÉ NA MÍRU tomuto konkrétmiu projektu a technické doméně.");
             sb.AppendLine();
             sb.AppendLine("Pravidla pro otázky:");
             sb.AppendLine("- Každá otázka must patřit do jedné z těchto sekcí: Cíl a uživatelé, Rozsah, UX, Data, Technika, Akceptace, Rizika.");
@@ -464,12 +467,12 @@ namespace CodePlanner.Core
             sb.AppendLine();
             sb.AppendLine("Zde jsou základní standardní otázky a jejich výchozí texty pro inspiraci:");
 
-            foreach (var ot in Otazky.Vse)
+            foreach (var ot in StandardQuestions.All)
             {
                 sb.AppendLine($"- Výchozí ID: {ot.Id}");
-                sb.AppendLine($"  Výchozí sekce: {ot.Sekce}");
+                sb.AppendLine($"  Výchozí sekce: {ot.Section}");
                 sb.AppendLine($"  Výchozí otázka: {ot.GetText(typProjektuKlic)}");
-                sb.AppendLine($"  Výchozí předpoklad: {ot.GetVychoziPredpoklad(typProjektuKlic)}");
+                sb.AppendLine($"  Výchozí předpoklad: {ot.GetDefaultAssumption(typProjektuKlic)}");
             }
 
             sb.AppendLine();
@@ -510,7 +513,7 @@ namespace CodePlanner.Core
             return sb.ToString();
         }
 
-        public static async Task<GeminiDynamickyVysledek> AnalyzujNapadAsync(string apiKey, string model, string napad, string typProjektuKlic, string referencniText = null, string mockupBase64 = null, string mockupMime = null, CancellationToken cancellationToken = default)
+        public static async Task<GeminiDynamicResult> AnalyzeIdeaAsync(string apiKey, string model, string napad, string typProjektuKlic, string referencniText = null, string mockupBase64 = null, string mockupMime = null, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -554,10 +557,10 @@ namespace CodePlanner.Core
             if (string.IsNullOrWhiteSpace(textResponse))
                 throw new Exception("Odpověď z Gemini API je prázdná.");
 
-            return DeserializujAiOdpoved<GeminiDynamickyVysledek>(textResponse);
+            return DeserializujAiOdpoved<GeminiDynamicResult>(textResponse);
         }
 
-        public static async Task<string> PrepisAudioAsync(string apiKey, string model, string cestaWav, CancellationToken cancellationToken = default)
+        public static async Task<string> TranscribeAudioAsync(string apiKey, string model, string cestaWav, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -586,7 +589,7 @@ namespace CodePlanner.Core
                             },
                             new
                             {
-                                text = "Přepiš toto audio slovo od slova do češtiny (případně do jazyka, kterým se mluví). Vypiš POUZE a VÝHRADNĚ výsledný přepis textu bez jakýchkoliv úvodních či vysvětlujících frází, bez uvozovek a bez komentářů. Pokud je v audiu ticho nebo šum, nevypisuj vůbec nic."
+                                text = "Transcribe the audio exactly as spoken. Output only the transcript in Czech, without any introductory or concluding text."
                             }
                         }
                     }
@@ -597,7 +600,7 @@ namespace CodePlanner.Core
             return textResponse?.Trim() ?? "";
         }
 
-        public static async Task<List<Nalez>> AnalyzujKonzistenciAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
+        public static async Task<List<ConsistencyFinding>> AnalyzeConsistencyAsync(string apiKey, string model, ProjectSpecification projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -624,7 +627,7 @@ namespace CodePlanner.Core
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je kompletní specifikace projektu:");
-            sb.AppendLine(OrezText(SpecSluzba.RenderMarkdown(projekt)));
+            sb.AppendLine(OrezText(SpecificationService.RenderMarkdown(projekt)));
 
             var requestBody = new
             {
@@ -645,26 +648,26 @@ namespace CodePlanner.Core
             };
 
             string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
-            var vysledek = DeserializujAiOdpoved<GeminiKonzistenceVysledek>(textResponse);
+            var vysledek = DeserializujAiOdpoved<GeminiConsistencyResult>(textResponse);
 
-            var nalezy = new List<Nalez>();
-            if (vysledek.Nalezy != null)
+            var findings = new List<ConsistencyFinding>();
+            if (vysledek.Findings != null)
             {
-                foreach (var n in vysledek.Nalezy)
+                foreach (var n in vysledek.Findings)
                 {
-                    nalezy.Add(new Nalez
+                    findings.Add(new ConsistencyFinding
                     {
-                        Zavaznost = string.Equals(n.Zavaznost, "Rozpor", StringComparison.OrdinalIgnoreCase) ? Zavaznost.Rozpor : Zavaznost.Varovani,
-                        Titulek = n.Titulek ?? "",
+                        Severity = string.Equals(n.Severity, "Rozpor", StringComparison.OrdinalIgnoreCase) ? Severity.Conflict : Severity.Warning,
+                        Title = n.Title ?? "",
                         Detail = n.Detail ?? ""
                     });
                 }
             }
 
-            return nalezy;
+            return findings;
         }
 
-        public static async Task<List<UserStory>> GenerujUserStoriesAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
+        public static async Task<List<UserStory>> GenerateUserStoriesAsync(string apiKey, string model, ProjectSpecification projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -697,7 +700,7 @@ namespace CodePlanner.Core
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je kompletní specifikace projektu:");
-            sb.AppendLine(OrezText(SpecSluzba.RenderMarkdown(projekt)));
+            sb.AppendLine(OrezText(SpecificationService.RenderMarkdown(projekt)));
 
             var requestBody = new
             {
@@ -718,7 +721,7 @@ namespace CodePlanner.Core
             };
 
             string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
-            var vysledek = DeserializujAiOdpoved<GeminiUserStoriesVysledek>(textResponse);
+            var vysledek = DeserializujAiOdpoved<GeminiUserStoriesResult>(textResponse);
 
             var stories = new List<UserStory>();
             if (vysledek.Stories != null)
@@ -728,10 +731,10 @@ namespace CodePlanner.Core
                     stories.Add(new UserStory
                     {
                         Id = s.Id ?? "",
-                        Titulek = s.Titulek ?? "",
-                        Popis = s.Popis ?? "",
-                        Kriteria = s.Kriteria ?? new List<string>(),
-                        Priorita = s.Priorita ?? "Střední"
+                        Title = s.Title ?? "",
+                        Description = s.Description ?? "",
+                        Criteria = s.Criteria ?? new List<string>(),
+                        Priority = s.Priority ?? "Střední"
                     });
                 }
             }
@@ -739,12 +742,12 @@ namespace CodePlanner.Core
             return stories;
         }
 
-        public static async Task<string> PosliChatZpravuAsync(string apiKey, string model, SpecProjekt projekt, List<ChatMessage> novyChatLog, CancellationToken cancellationToken = default)
+        public static async Task<string> SendChatMessageAsync(string apiKey, string model, ProjectSpecification projekt, List<ChatMessage> novyChatLog, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
 
-            string specMarkdown = OrezText(SpecSluzba.RenderMarkdown(projekt));
+            string specMarkdown = OrezText(SpecificationService.RenderMarkdown(projekt));
             string systemPrompt = "Jsi zkušený softwarový architekt, agilní kouč a seniorní vývojář. Odpovídáš na dotazy ohledně navrhovaného projektu.\n\n" +
                                  "Zde je kompletní specifikace projektu, která je tvým jediným zdrojem pravdy o cílech a parametrech systému. Všechny své odpovědi přizpůsob tomuto kontextu:\n\n" +
                                  specMarkdown + "\n\n" +
@@ -752,13 +755,10 @@ namespace CodePlanner.Core
 
             var vsechnyZpravy = novyChatLog ?? new List<ChatMessage>();
 
-            // Posíláme jen posledních 20 zpráv historie – starší kontext drží specifikace v system promptu.
             var zpravy = vsechnyZpravy.Count > 20
                 ? vsechnyZpravy.Skip(vsechnyZpravy.Count - 20).ToList()
                 : vsechnyZpravy;
 
-            // Mockup přikládáme jen k úplně první zprávě konverzace (historie před aktuální zprávou je prázdná),
-            // aby se obrázek neposílal znovu při každém dalším volání.
             bool prilozitMockup = vsechnyZpravy.Count == 1 && !string.IsNullOrWhiteSpace(projekt.MockupBase64);
 
             var turnsList = new List<object>();
@@ -772,7 +772,7 @@ namespace CodePlanner.Core
 
                 if (prilozitMockup && i == 0 && string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
                 {
-                    string mime = (projekt.MockupNazev != null && (projekt.MockupNazev.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || projekt.MockupNazev.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
+                    string mime = (projekt.MockupName != null && (projekt.MockupName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || projekt.MockupName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
                     parts.Add(new
                     {
                         inlineData = new
@@ -805,7 +805,7 @@ namespace CodePlanner.Core
             return await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
         }
 
-        public static async Task<ProjektMetriky> GenerujMetrikyAsync(string apiKey, string model, SpecProjekt projekt, CancellationToken cancellationToken = default)
+        public static async Task<ProjectMetrics> GenerateMetricsAsync(string apiKey, string model, ProjectSpecification projekt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentException("API klíč pro Gemini nesmí být prázdný.");
@@ -826,7 +826,7 @@ namespace CodePlanner.Core
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("Zde je aktuální specifikace projektu:");
-            sb.AppendLine(OrezText(SpecSluzba.RenderMarkdown(projekt)));
+            sb.AppendLine(OrezText(SpecificationService.RenderMarkdown(projekt)));
 
             if (projekt.UserStories != null && projekt.UserStories.Count > 0)
             {
@@ -834,7 +834,7 @@ namespace CodePlanner.Core
                 sb.AppendLine("Zde je seznam agilních User Stories pro přesnější odhad:");
                 foreach (var us in projekt.UserStories)
                 {
-                    sb.AppendLine($"- {us.Id}: {us.Titulek} (Priorita: {us.Priorita})");
+                    sb.AppendLine($"- {us.Id}: {us.Title} (Priorita: {us.Priority})");
                 }
             }
 
@@ -857,45 +857,45 @@ namespace CodePlanner.Core
             };
 
             string textResponse = await PosliGeminiRequestAsync(apiKey, model, requestBody, cancellationToken);
-            var vysledek = DeserializujAiOdpoved<GeminiMetrikyVysledek>(textResponse);
+            var vysledek = DeserializujAiOdpoved<GeminiMetricsResult>(textResponse);
 
-            return new ProjektMetriky
+            return new ProjectMetrics
             {
-                CasovyOdhadMin = vysledek.CasovyOdhadMin ?? "",
-                CasovyOdhadMax = vysledek.CasovyOdhadMax ?? "",
-                Komplexita = vysledek.Komplexita ?? "Střední",
-                SlozeniTymu = vysledek.SlozeniTymu ?? "",
-                DoporucenyRozpocet = vysledek.DoporucenyRozpocet ?? "",
-                TechnickyRozbor = vysledek.TechnickyRozbor ?? "",
-                RizikaMetriky = vysledek.RizikaMetriky ?? new List<string>(),
-                CasVypoctu = DateTime.Now
+                TimeEstimateMin = vysledek.TimeEstimateMin ?? "",
+                TimeEstimateMax = vysledek.TimeEstimateMax ?? "",
+                Complexity = vysledek.Complexity ?? "Střední",
+                TeamComposition = vysledek.TeamComposition ?? "",
+                RecommendedBudget = vysledek.RecommendedBudget ?? "",
+                TechnicalAnalysis = vysledek.TechnicalAnalysis ?? "",
+                MetricRisks = vysledek.MetricRisks ?? new List<string>(),
+                CalculationTimestamp = DateTime.Now
             };
         }
     }
 
 
-    public class GeminiMetrikyVysledek
+    public class GeminiMetricsResult
     {
         [JsonPropertyName("casovyOdhadMin")]
-        public string CasovyOdhadMin { get; set; } = "";
+        public string TimeEstimateMin { get; set; } = "";
 
         [JsonPropertyName("casovyOdhadMax")]
-        public string CasovyOdhadMax { get; set; } = "";
+        public string TimeEstimateMax { get; set; } = "";
 
         [JsonPropertyName("komplexita")]
-        public string Komplexita { get; set; } = "";
+        public string Complexity { get; set; } = "";
 
         [JsonPropertyName("slozeniTymu")]
-        public string SlozeniTymu { get; set; } = "";
+        public string TeamComposition { get; set; } = "";
 
         [JsonPropertyName("doporucenyRozpocet")]
-        public string DoporucenyRozpocet { get; set; } = "";
+        public string RecommendedBudget { get; set; } = "";
 
         [JsonPropertyName("technickyRozbor")]
-        public string TechnickyRozbor { get; set; } = "";
+        public string TechnicalAnalysis { get; set; } = "";
 
         [JsonPropertyName("rizikaMetriky")]
-        public List<string> RizikaMetriky { get; set; } = new List<string>();
+        public List<string> MetricRisks { get; set; } = new List<string>();
     }
 }
 // konec souboru

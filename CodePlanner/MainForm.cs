@@ -24,7 +24,7 @@ namespace CodePlanner
         private static readonly Color Oranzova = Color.FromArgb(230, 140, 0);
         private static readonly Color SedaText = Color.FromArgb(105, 105, 105);
 
-        private SpecProjekt _projekt = new SpecProjekt();
+        private ProjectSpecification _projekt = new ProjectSpecification();
         private string _cestaSouboru = null;
         private bool _dirty = false;
         private bool _nacitani = false;   // potlačí eventy při programových změnách
@@ -46,7 +46,7 @@ namespace CodePlanner
 
         private const string PlaceholderChatu = "Např. ‚Co v zadání ještě chybí?‘ nebo ‚Co bude nejtěžší část?‘";
         private const string TipDiktovani = "Podržte a mluvte, nebo klikněte pro zapnutí/vypnutí. Přepis zajišťuje AI (Gemini). Tip: Win+H je vestavěné diktování Windows zdarma.";
-        private const string RadaMikrofon = "Zkontrolujte mikrofon v Nastavení Windows → Soukromí → Mikrofon.";
+        private const string RadaMikrofon = "Checkte mikrofon v Nastavení Windows → Soukromí → Mikrofon.";
 
         private static string SlozkaDatAplikace
             => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CodePlanner");
@@ -86,7 +86,7 @@ namespace CodePlanner
         private RichTextBox rtbSpec;
         private Label lblSpecHlavicka;
         private Label lblNalezy;
-        private List<Nalez> _nalezy = new List<Nalez>();
+        private List<ConsistencyFinding> _nalezy = new List<ConsistencyFinding>();
         private ListView lvLog;
         private ToolStripStatusLabel lblStav;
         private ToolTip _tipReference;
@@ -100,7 +100,7 @@ namespace CodePlanner
 
         public MainForm()
         {
-            SablonaSluzba.NactiCustomSablony();
+            TemplateService.LoadCustomTemplates();
             _tipReference = new ToolTip();
             _debounceTimer = new System.Windows.Forms.Timer();
             _debounceTimer.Interval = 500;
@@ -408,19 +408,19 @@ namespace CodePlanner
             txtNazev.TextChanged += (s, e) =>
             {
                 if (_nacitani) return;
-                _projekt.Nazev = txtNazev.Text;
+                _projekt.Name = txtNazev.Text;
                 OznacZmenu();
                 _debounceTimer.Stop();
                 _debounceTimer.Start();
             };
-            txtNazev.Enter += (s, e) => _nazevSnapshot = _projekt.Nazev ?? "";
+            txtNazev.Enter += (s, e) => _nazevSnapshot = _projekt.Name ?? "";
             txtNazev.Leave += (s, e) =>
             {
                 if (_nacitani) return;
                 _debounceTimer.Stop();
-                if ((_projekt.Nazev ?? "") != _nazevSnapshot)
+                if ((_projekt.Name ?? "") != _nazevSnapshot)
                 {
-                    SpecSluzba.Zmena(_projekt, "Název", $"Změněn název projektu na '{_projekt.Nazev}'.");
+                    SpecificationService.LogChange(_projekt, "Název", $"Změněn název projektu na '{_projekt.Name}'.");
                     ObnovLog();
                     ObnovStav();
                 }
@@ -539,19 +539,19 @@ namespace CodePlanner
             txtNapad.TextChanged += (s, e) =>
             {
                 if (_nacitani) return;
-                _projekt.Napad = txtNapad.Text;
+                _projekt.Idea = txtNapad.Text;
                 OznacZmenu();
                 _debounceTimer.Stop();
                 _debounceTimer.Start();
             };
-            txtNapad.Enter += (s, e) => _napadSnapshot = _projekt.Napad ?? "";
+            txtNapad.Enter += (s, e) => _napadSnapshot = _projekt.Idea ?? "";
             txtNapad.Leave += (s, e) =>
             {
                 if (_nacitani) return;
                 _debounceTimer.Stop();
-                if ((_projekt.Napad ?? "") != _napadSnapshot)
+                if ((_projekt.Idea ?? "") != _napadSnapshot)
                 {
-                    SpecSluzba.Zmena(_projekt, "Nápad", "Upraven text původního nápadu.");
+                    SpecificationService.LogChange(_projekt, "Nápad", "Upraven text původního nápadu.");
                     ObnovLog();
                     ObnovStav();
                     RenderSpecifikaci();
@@ -1222,10 +1222,10 @@ namespace CodePlanner
         private void CmbTyp_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (_nacitani) return;
-            if (!(cmbTyp.SelectedItem is ComboItemTypProjektu vybrany)) return;
-            if (string.Equals(_projekt.TypProjektuKlic, vybrany.Klic, StringComparison.OrdinalIgnoreCase)) return;
+            if (!(cmbTyp.SelectedItem is ProjectTypeComboItem vybrany)) return;
+            if (string.Equals(_projekt.ProjectTypeKey, vybrany.Key, StringComparison.OrdinalIgnoreCase)) return;
 
-            SpecSluzba.ZmenTypProjektu(_projekt, vybrany.Klic);
+            SpecificationService.ChangeProjectType(_projekt, vybrany.Key);
             OznacZmenu();
             ObnovVse();
             UkazVybranouOtazku();
@@ -1233,8 +1233,8 @@ namespace CodePlanner
 
         private void NovyProjekt(bool prvniSpusteni)
         {
-            _projekt = new SpecProjekt();
-            _projekt.Log.Add(new Rozhodnuti { Cas = DateTime.Now, Akce = "Projekt", Detail = "Založen nový projekt." });
+            _projekt = new ProjectSpecification();
+            _projekt.ChangeLog.Add(new DecisionLogEntry { Timestamp = DateTime.Now, Action = "Projekt", Detail = "Založen nový projekt." });
             _cestaSouboru = null;
             _dirty = false;
 
@@ -1250,7 +1250,7 @@ namespace CodePlanner
             _nacitani = false;
 
             ObnovVse();
-            VyberOtazku(SpecSluzba.DalsiNezodpovezena(_projekt));
+            VyberOtazku(SpecificationService.GetNextUnansweredQuestion(_projekt));
             if (!prvniSpusteni) Stav("Nový projekt založen.");
         }
 
@@ -1274,15 +1274,15 @@ namespace CodePlanner
             {
                 MessageBox.Show(this, $"Soubor nebyl nalezen:\n\n{cesta}\n\nBude odebrán ze seznamu nedávných.",
                     "Soubor nenalezen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                var nast = GeminiNastaveni.Nacti();
-                nast.OdeberNedavnyProjekt(cesta);
+                var nast = GeminiSettings.Load();
+                nast.RemoveRecentProject(cesta);
                 ObnovNedavneMenu();
                 return;
             }
 
             try
             {
-                _projekt = SpecSluzba.NactiProjekt(cesta);
+                _projekt = SpecificationService.LoadProject(cesta);
                 _cestaSouboru = cesta;
                 _dirty = false;
 
@@ -1291,18 +1291,18 @@ namespace CodePlanner
                 ObnovTlacitkoVratitAnalyzu();
 
                 _nacitani = true;
-                txtNazev.Text = _projekt.Nazev ?? "";
-                txtNapad.Text = _projekt.Napad ?? "";
-                NastavTypCombo(_projekt.TypProjektuKlic);
+                txtNazev.Text = _projekt.Name ?? "";
+                txtNapad.Text = _projekt.Idea ?? "";
+                NastavTypCombo(_projekt.ProjectTypeKey);
                 txtOdpoved.Text = "";
                 _nacitani = false;
 
                 ObnovVse();
-                VyberOtazku(SpecSluzba.DalsiNezodpovezena(_projekt));
+                VyberOtazku(SpecificationService.GetNextUnansweredQuestion(_projekt));
                 Stav("Otevřeno: " + Path.GetFileName(cesta));
 
-                var nast = GeminiNastaveni.Nacti();
-                nast.PridejNedavnyProjekt(cesta);
+                var nast = GeminiSettings.Load();
+                nast.AddRecentProject(cesta);
                 ObnovNedavneMenu();
             }
             catch (Exception ex)
@@ -1320,7 +1320,7 @@ namespace CodePlanner
                 {
                     Title = "Uložit projekt",
                     Filter = "Projekt CodePlanner (*.vcbrief)|*.vcbrief",
-                    FileName = BezpecnyNazevSouboru(_projekt.Nazev, "projekt") + ".vcbrief"
+                    FileName = BezpecnyNazevSouboru(_projekt.Name, "projekt") + ".vcbrief"
                 };
                 if (dlg.ShowDialog(this) != DialogResult.OK) return false;
                 _cestaSouboru = dlg.FileName;
@@ -1328,14 +1328,14 @@ namespace CodePlanner
 
             try
             {
-                SpecSluzba.UlozProjekt(_projekt, _cestaSouboru);
+                SpecificationService.SaveProject(_projekt, _cestaSouboru);
                 _dirty = false;
                 SmazAutosave();   // po ručním uložení už automatická záloha není potřeba
                 ObnovTitulek();
                 Stav("Uloženo: " + Path.GetFileName(_cestaSouboru));
 
-                var nast = GeminiNastaveni.Nacti();
-                nast.PridejNedavnyProjekt(_cestaSouboru);
+                var nast = GeminiSettings.Load();
+                nast.AddRecentProject(_cestaSouboru);
                 ObnovNedavneMenu();
 
                 return true;
@@ -1356,13 +1356,13 @@ namespace CodePlanner
             {
                 Title = markdown ? "Export specifikace (Markdown)" : "Export specifikace (JSON)",
                 Filter = markdown ? "Markdown (*.md)|*.md" : "JSON (*.json)|*.json",
-                FileName = BezpecnyNazevSouboru(_projekt.Nazev, "specifikace") + (markdown ? ".md" : ".json")
+                FileName = BezpecnyNazevSouboru(_projekt.Name, "specifikace") + (markdown ? ".md" : ".json")
             };
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
             try
             {
-                var obsah = markdown ? SpecSluzba.RenderMarkdown(_projekt) : SpecSluzba.RenderJson(_projekt);
+                var obsah = markdown ? SpecificationService.RenderMarkdown(_projekt) : SpecificationService.RenderJson(_projekt);
                 File.WriteAllText(dlg.FileName, obsah, new System.Text.UTF8Encoding(true));
                 Stav("Export hotový: " + Path.GetFileName(dlg.FileName));
 
@@ -1393,13 +1393,13 @@ namespace CodePlanner
             {
                 Title = "Export specifikace (Interaktivní HTML Web)",
                 Filter = "HTML soubory (*.html;*.htm)|*.html;*.htm",
-                FileName = BezpecnyNazevSouboru(_projekt.Nazev, "specifikace") + ".html"
+                FileName = BezpecnyNazevSouboru(_projekt.Name, "specifikace") + ".html"
             };
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
             try
             {
-                var obsah = SpecSluzba.RenderHtml(_projekt);
+                var obsah = SpecificationService.RenderHtml(_projekt);
                 File.WriteAllText(dlg.FileName, obsah, Encoding.UTF8);
                 Stav("HTML export hotový: " + Path.GetFileName(dlg.FileName));
                 
@@ -1430,7 +1430,7 @@ namespace CodePlanner
             {
                 Title = "Exportovat specifikaci do PDF",
                 Filter = "PDF soubory (*.pdf)|*.pdf",
-                FileName = BezpecnyNazevSouboru(_projekt.Nazev, "specifikace") + ".pdf"
+                FileName = BezpecnyNazevSouboru(_projekt.Name, "specifikace") + ".pdf"
             })
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -1444,7 +1444,7 @@ namespace CodePlanner
 
                     if (!File.Exists(dlg.FileName))
                     {
-                        throw new FileNotFoundException("Soubor PDF nebyl vytvořen. Zkontrolujte prosím konfiguraci své PDF tiskárny.");
+                        throw new FileNotFoundException("Soubor PDF nebyl vytvořen. Checkte prosím konfiguraci své PDF tiskárny.");
                     }
 
                     Stav("Export do PDF dokončen.");
@@ -1474,8 +1474,8 @@ namespace CodePlanner
 
         private void ZobrazUserStories()
         {
-            var nastaveni = GeminiNastaveni.Nacti();
-            using (var dlg = new UserStoriesForm(_projekt.UserStories, nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt, () => OznacZmenu()))
+            var nastaveni = GeminiSettings.Load();
+            using (var dlg = new UserStoriesForm(_projekt.UserStories, nastaveni.EffectiveApiKey, nastaveni.GeminiModel, _projekt, () => OznacZmenu()))
             {
                 dlg.ShowDialog(this);
             }
@@ -1484,8 +1484,8 @@ namespace CodePlanner
 
         private void ZobrazMetriky()
         {
-            var nastaveni = GeminiNastaveni.Nacti();
-            using (var dlg = new MetrikyForm(_projekt.Metriky, nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt, () => OznacZmenu()))
+            var nastaveni = GeminiSettings.Load();
+            using (var dlg = new MetrikyForm(_projekt.Metrics, nastaveni.EffectiveApiKey, nastaveni.GeminiModel, _projekt, () => OznacZmenu()))
             {
                 dlg.ShowDialog(this);
             }
@@ -1504,7 +1504,7 @@ namespace CodePlanner
                 return;
             }
 
-            SpecSluzba.Odpovez(_projekt, ot.Id, txtOdpoved.Text);
+            SpecificationService.AnswerQuestion(_projekt, ot.Id, txtOdpoved.Text);
             OznacZmenu();
             ObnovVse();
             PrejdiNaDalsi(ot);
@@ -1515,15 +1515,15 @@ namespace CodePlanner
             var ot = VybranaOtazka();
             if (ot == null) return;
 
-            SpecSluzba.PouzijPredpoklad(_projekt, ot.Id);
+            SpecificationService.UseAssumption(_projekt, ot.Id);
             OznacZmenu();
             ObnovVse();
             PrejdiNaDalsi(ot);
         }
 
-        private void PrejdiNaDalsi(Otazka posledni)
+        private void PrejdiNaDalsi(Question posledni)
         {
-            var dalsi = SpecSluzba.DalsiNezodpovezena(_projekt);
+            var dalsi = SpecificationService.GetNextUnansweredQuestion(_projekt);
             if (dalsi != null)
             {
                 VyberOtazku(dalsi);
@@ -1537,18 +1537,18 @@ namespace CodePlanner
 
         // ---------------- pomocné ----------------
 
-        private Otazka VybranaOtazka()
+        private Question VybranaOtazka()
         {
             int i = lstOtazky.SelectedIndex;
-            var otazky = SpecSluzba.VratOtazkyProjektu(_projekt).ToList();
+            var otazky = SpecificationService.GetProjectQuestions(_projekt).ToList();
             if (i < 0 || i >= otazky.Count) return null;
             return otazky[i];
         }
 
-        private void VyberOtazku(Otazka ot)
+        private void VyberOtazku(Question ot)
         {
             if (ot == null) return;
-            var otazky = SpecSluzba.VratOtazkyProjektu(_projekt).ToList();
+            var otazky = SpecificationService.GetProjectQuestions(_projekt).ToList();
             for (int i = 0; i < otazky.Count; i++)
             {
                 if (otazky[i].Id == ot.Id)
@@ -1566,12 +1566,12 @@ namespace CodePlanner
 
             bool programoveVolani = _nacitani;   // true = jde o programovou obnovu seznamu, ne o volbu uživatele
 
-            lblOtazka.Text = ot.GetText(_projekt.TypProjektuKlic);
-            lblNapoveda.Text = ot.GetNapoveda(_projekt.TypProjektuKlic) + "  (Když nevíte, předpoklad bude: „" + ot.GetVychoziPredpoklad(_projekt.TypProjektuKlic) + "“)";
+            lblOtazka.Text = ot.GetText(_projekt.ProjectTypeKey);
+            lblNapoveda.Text = ot.GetHelpText(_projekt.ProjectTypeKey) + "  (Když nevíte, předpoklad bude: „" + ot.GetDefaultAssumption(_projekt.ProjectTypeKey) + "“)";
 
-            var odp = SpecSluzba.OdpovedNa(_projekt, ot.Id);
+            var odp = SpecificationService.GetAnswerFor(_projekt, ot.Id);
             _nacitani = true;
-            txtOdpoved.Text = odp != null && !odp.JePredpoklad ? odp.Text : "";
+            txtOdpoved.Text = odp != null && !odp.IsAssumption ? odp.Text : "";
             _nacitani = programoveVolani;
 
             foreach (Control ctrl in pnlQuickOptions.Controls)
@@ -1579,7 +1579,7 @@ namespace CodePlanner
                 ctrl.Dispose();
             }
             pnlQuickOptions.Controls.Clear();
-            var moznosti = ot.GetMoznosti(_projekt.TypProjektuKlic);
+            var moznosti = ot.GetOptions(_projekt.ProjectTypeKey);
             if (moznosti != null && moznosti.Count > 0)
             {
                 var lblTip = new Label
@@ -1646,13 +1646,13 @@ namespace CodePlanner
             _stavyOtazek.Clear();
             _vysokyDopad.Clear();
 
-            var otazky = SpecSluzba.VratOtazkyProjektu(_projekt).ToList();
+            var otazky = SpecificationService.GetProjectQuestions(_projekt).ToList();
             foreach (var ot in otazky)
             {
-                var odp = SpecSluzba.OdpovedNa(_projekt, ot.Id);
-                _stavyOtazek.Add(odp == null ? '○' : (odp.JePredpoklad ? '≈' : '✔'));
-                _vysokyDopad.Add(ot.Dopad == Dopad.Vysoky);
-                lstOtazky.Items.Add(ot.GetText(_projekt.TypProjektuKlic));
+                var odp = SpecificationService.GetAnswerFor(_projekt, ot.Id);
+                _stavyOtazek.Add(odp == null ? '○' : (odp.IsAssumption ? '≈' : '✔'));
+                _vysokyDopad.Add(ot.Impact == Impact.High);
+                lstOtazky.Items.Add(ot.GetText(_projekt.ProjectTypeKey));
             }
 
             if (vybrano >= 0 && vybrano < lstOtazky.Items.Count)
@@ -1663,7 +1663,7 @@ namespace CodePlanner
 
         private void RenderSpecifikaci()
         {
-            string md = SpecSluzba.RenderMarkdown(_projekt);
+            string md = SpecificationService.RenderMarkdown(_projekt);
             try
             {
                 rtbSpec.Rtf = MarkdownNaRtf(md);
@@ -1672,9 +1672,9 @@ namespace CodePlanner
             {
                 rtbSpec.Text = md;   // nouzový režim: syrový markdown
             }
-            int celkem = SpecSluzba.VratOtazkyProjektu(_projekt).Count();
-            lblSpecHlavicka.Text = "Živá specifikace · verze " + _projekt.Verze +
-                " · zodpovězeno " + (SpecSluzba.PocetZodpovezenych(_projekt) + SpecSluzba.PocetPredpokladu(_projekt)) +
+            int celkem = SpecificationService.GetProjectQuestions(_projekt).Count();
+            lblSpecHlavicka.Text = "Živá specifikace · verze " + _projekt.Version +
+                " · zodpovězeno " + (SpecificationService.GetAnsweredCount(_projekt) + SpecificationService.GetAssumptionsCount(_projekt)) +
                 "/" + celkem;
             ObnovNalezy();
         }
@@ -1712,14 +1712,14 @@ namespace CodePlanner
 
         private void ObnovNalezy()
         {
-            _nalezy = KonzistencniKontrola.Zkontroluj(_projekt);
+            _nalezy = ConsistencyChecker.Check(_projekt);
             if (_nalezy.Count == 0)
             {
                 lblNalezy.Visible = false;
                 return;
             }
 
-            int rozpory = _nalezy.Count(n => n.Zavaznost == Zavaznost.Rozpor);
+            int rozpory = _nalezy.Count(n => n.Severity == Severity.Conflict);
             int varovani = _nalezy.Count - rozpory;
             var casti = new List<string>();
             if (rozpory > 0) casti.Add(Mnozne(rozpory, "rozpor", "rozpory", "rozporů"));
@@ -1738,8 +1738,8 @@ namespace CodePlanner
         {
             if (iKdyzPrazdne) ObnovNalezy();   // ať pracujeme s aktuálním stavem
             if (_nalezy.Count == 0 && !iKdyzPrazdne) return;
-            var nastaveni = GeminiNastaveni.Nacti();
-            using (var dlg = new NalezyForm(_nalezy, nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt))
+            var nastaveni = GeminiSettings.Load();
+            using (var dlg = new NalezyForm(_nalezy, nastaveni.EffectiveApiKey, nastaveni.GeminiModel, _projekt))
             {
                 dlg.ShowDialog(this);
             }
@@ -1753,10 +1753,10 @@ namespace CodePlanner
             lvLog.BeginUpdate();
             lvLog.Items.Clear();
             // nejnovější nahoře
-            foreach (var r in Enumerable.Reverse(_projekt.Log))
+            foreach (var r in Enumerable.Reverse(_projekt.ChangeLog))
             {
-                var it = new ListViewItem(r.Cas.ToString("d. M. yyyy H:mm:ss"));
-                it.SubItems.Add(r.Akce);
+                var it = new ListViewItem(r.Timestamp.ToString("d. M. yyyy H:mm:ss"));
+                it.SubItems.Add(r.Action);
                 it.SubItems.Add(r.Detail);
                 lvLog.Items.Add(it);
             }
@@ -1765,23 +1765,23 @@ namespace CodePlanner
 
         private void ObnovStav()
         {
-            int z = SpecSluzba.PocetZodpovezenych(_projekt);
-            int p = SpecSluzba.PocetPredpokladu(_projekt);
-            int otevrene = SpecSluzba.OtevreneOtazky(_projekt).Count;
-            int celkem = SpecSluzba.VratOtazkyProjektu(_projekt).Count();
+            int z = SpecificationService.GetAnsweredCount(_projekt);
+            int p = SpecificationService.GetAssumptionsCount(_projekt);
+            int otevrene = SpecificationService.GetOpenQuestions(_projekt).Count;
+            int celkem = SpecificationService.GetProjectQuestions(_projekt).Count();
             _podilHotovo = celkem > 0 ? (z + p) / (double)celkem : 0;
             pnlPostup.Invalidate();
             lblPostup.Text = "Zodpovězeno " + z + " · předpoklady " + p + " · otevřené " + otevrene + " (z " + celkem + ")";
 
             if (_isBusy || _chatBusy) return;   // průběžný stav AI operace nepřepisujeme
 
-            if (string.IsNullOrWhiteSpace(_projekt.Napad) && _projekt.Odpovedi.Count == 0)
+            if (string.IsNullOrWhiteSpace(_projekt.Idea) && _projekt.Answers.Count == 0)
             {
                 Stav("Začněte popsáním nápadu (krok 1) a nechte AI připravit otázky na míru.");
                 return;
             }
 
-            Stav("Verze specifikace " + _projekt.Verze + " · zodpovězeno " + z + "/" + celkem +
+            Stav("Verze specifikace " + _projekt.Version + " · zodpovězeno " + z + "/" + celkem +
                  " · předpoklady " + p + " · otevřené otázky " + otevrene);
         }
 
@@ -1793,7 +1793,7 @@ namespace CodePlanner
 
         private void ObnovTitulek()
         {
-            string nazev = string.IsNullOrWhiteSpace(_projekt.Nazev) ? "nový projekt" : _projekt.Nazev.Trim();
+            string nazev = string.IsNullOrWhiteSpace(_projekt.Name) ? "nový projekt" : _projekt.Name.Trim();
             Text = "CodePlanner – " + nazev + (_dirty ? " *" : "") + " – v2.0.1";
         }
 
@@ -1836,8 +1836,8 @@ namespace CodePlanner
                 return;
             }
 
-            var nastaveni = GeminiNastaveni.Nacti();
-            string apiKey = nastaveni.EfektivniApiKey;
+            var nastaveni = GeminiSettings.Load();
+            string apiKey = nastaveni.EffectiveApiKey;
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
@@ -1858,10 +1858,10 @@ namespace CodePlanner
                 return;
             }
 
-            if (_projekt.Odpovedi.Count > 0 || _projekt.UserStories.Count > 0)
+            if (_projekt.Answers.Count > 0 || _projekt.UserStories.Count > 0)
             {
                 var confirm = MessageBox.Show(this,
-                    "Analýza přepíše stávající odpovědi (" + _projekt.Odpovedi.Count + "), smaže User Stories (" +
+                    "Analýza přepíše stávající odpovědi (" + _projekt.Answers.Count + "), smaže User Stories (" +
                     _projekt.UserStories.Count + ") i odhad.\n" +
                     "Před spuštěním se vytvoří záloha, kterou lze vrátit tlačítkem „↩ Vrátit analýzu“.\n\nChcete pokračovat?",
                     "Přepsat specifikaci?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
@@ -1871,7 +1871,7 @@ namespace CodePlanner
             // Záloha projektu před analýzou – lze ji vrátit tlačítkem „↩ Vrátit analýzu“ v liště.
             try
             {
-                SpecSluzba.UlozProjekt(_projekt, CestaZalohyPredAnalyzou);
+                SpecificationService.SaveProject(_projekt, CestaZalohyPredAnalyzou);
                 _snapshotAnalyzyExistuje = true;
                 ObnovTlacitkoVratitAnalyzu();
             }
@@ -1891,15 +1891,15 @@ namespace CodePlanner
             try
             {
                 string model = nastaveni.GeminiModel;
-                string mockupMime = (_projekt.MockupNazev != null && (_projekt.MockupNazev.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || _projekt.MockupNazev.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
-                var vysledek = await GeminiService.AnalyzujNapadAsync(apiKey, model, napad, _projekt.TypProjektuKlic, _projekt.ReferencniText, _projekt.MockupBase64, mockupMime, _ctsAi.Token);
+                string mockupMime = (_projekt.MockupName != null && (_projekt.MockupName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || _projekt.MockupName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))) ? "image/jpeg" : "image/png";
+                var vysledek = await GeminiService.AnalyzeIdeaAsync(apiKey, model, napad, _projekt.ProjectTypeKey, _projekt.ReferenceText, _projekt.MockupBase64, mockupMime, _ctsAi.Token);
 
-                if (vysledek == null || vysledek.Otazky == null || vysledek.Otazky.Count == 0)
+                if (vysledek == null || vysledek.Questions == null || vysledek.Questions.Count == 0)
                 {
                     throw new Exception("AI analýza nevrátila žádné otázky.");
                 }
 
-                var uniqueQuestions = vysledek.Otazky
+                var uniqueQuestions = vysledek.Questions
                     .Where(ot => !string.IsNullOrWhiteSpace(ot.Id))
                     .GroupBy(ot => ot.Id)
                     .Select(g => g.First())
@@ -1908,48 +1908,48 @@ namespace CodePlanner
                 try
                 {
                     _nacitani = true;
-                    _projekt.Nazev = vysledek.Nazev ?? "";
-                    txtNazev.Text = _projekt.Nazev;
-                    _projekt.Otazky.Clear();
-                    _projekt.Odpovedi.Clear();
+                    _projekt.Name = vysledek.Name ?? "";
+                    txtNazev.Text = _projekt.Name;
+                    _projekt.Questions.Clear();
+                    _projekt.Answers.Clear();
                     _projekt.UserStories.Clear();
-                    _projekt.Metriky = new ProjektMetriky();
+                    _projekt.Metrics = new ProjectMetrics();
 
                     foreach (var ot in uniqueQuestions)
                     {
-                        var dopadEnum = string.Equals(ot.Dopad, "Vysoky", StringComparison.OrdinalIgnoreCase) ? Dopad.Vysoky : Dopad.Stredni;
-                        _projekt.Otazky.Add(new Otazka
+                        var dopadEnum = string.Equals(ot.Impact, "Vysoky", StringComparison.OrdinalIgnoreCase) ? Impact.High : Impact.Medium;
+                        _projekt.Questions.Add(new Question
                         {
                             Id = ot.Id,
-                            Sekce = ot.Sekce,
-                            Dopad = dopadEnum,
+                            Section = ot.Section,
+                            Impact = dopadEnum,
                             Text = ot.Text,
-                            Napoveda = ot.Napoveda,
-                            VychoziPredpoklad = ot.VychoziPredpoklad,
-                            Moznosti = ot.Moznosti ?? new List<string>()
+                            HelpText = ot.HelpText,
+                            DefaultAssumption = ot.DefaultAssumption,
+                            Options = ot.Options ?? new List<string>()
                         });
 
                         // Prázdnou odpověď od AI nepřidáváme – otázka zůstane otevřená.
                         // Má-li otázka výchozí předpoklad, použijeme ho a poctivě označíme jako předpoklad.
-                        string textOdpovedi = (ot.Odpoved ?? "").Trim();
+                        string textOdpovedi = (ot.Answer ?? "").Trim();
                         if (textOdpovedi.Length > 0)
                         {
-                            _projekt.Odpovedi.Add(new Odpoved
+                            _projekt.Answers.Add(new Answer
                             {
-                                OtazkaId = ot.Id,
+                                QuestionId = ot.Id,
                                 Text = textOdpovedi,
-                                JePredpoklad = ot.JePredpoklad,
-                                Cas = DateTime.Now
+                                IsAssumption = ot.IsAssumption,
+                                Timestamp = DateTime.Now
                             });
                         }
-                        else if (!string.IsNullOrWhiteSpace(ot.VychoziPredpoklad))
+                        else if (!string.IsNullOrWhiteSpace(ot.DefaultAssumption))
                         {
-                            _projekt.Odpovedi.Add(new Odpoved
+                            _projekt.Answers.Add(new Answer
                             {
-                                OtazkaId = ot.Id,
-                                Text = ot.VychoziPredpoklad.Trim(),
-                                JePredpoklad = true,
-                                Cas = DateTime.Now
+                                QuestionId = ot.Id,
+                                Text = ot.DefaultAssumption.Trim(),
+                                IsAssumption = true,
+                                Timestamp = DateTime.Now
                             });
                         }
                     }
@@ -1959,18 +1959,18 @@ namespace CodePlanner
                     _nacitani = false;
                 }
 
-                _projekt.Verze++;
-                _projekt.Upraveno = DateTime.Now;
-                _projekt.Log.Add(new Rozhodnuti
+                _projekt.Version++;
+                _projekt.UpdatedAt = DateTime.Now;
+                _projekt.ChangeLog.Add(new DecisionLogEntry
                 {
-                    Cas = DateTime.Now,
-                    Akce = "AI Analýza",
+                    Timestamp = DateTime.Now,
+                    Action = "AI Analýza",
                     Detail = $"Specifikace vygenerována pomocí Gemini API (model: {model})."
                 });
 
                 OznacZmenu();
                 ObnovVse();
-                VyberOtazku(SpecSluzba.DalsiNezodpovezena(_projekt));
+                VyberOtazku(SpecificationService.GetNextUnansweredQuestion(_projekt));
 
                 // úspěch bez vyskakovacího okna – stačí stavový řádek (viz UX bod „méně modálů“)
                 stavPoDokonceni = "✅ Analýza dokončena – projděte si otázky a odpovědi (krok 2). Vrátit ji lze tlačítkem „↩ Vrátit analýzu“.";
@@ -2019,7 +2019,7 @@ namespace CodePlanner
             btnPredpoklad.Enabled = !busy;
 
             // typ zůstává zamčený, dokud má projekt dynamické otázky z AI analýzy (viz ObnovComboTypu)
-            if (cmbTyp != null) cmbTyp.Enabled = !busy && (_projekt?.Otazky == null || _projekt.Otazky.Count == 0);
+            if (cmbTyp != null) cmbTyp.Enabled = !busy && (_projekt?.Questions == null || _projekt.Questions.Count == 0);
             if (btnDiktovatNapad != null) btnDiktovatNapad.Enabled = !busy;
             if (btnDiktovatOdpoved != null) btnDiktovatOdpoved.Enabled = !busy;
             if (btnReferencie != null) btnReferencie.Enabled = !busy;
@@ -2048,8 +2048,8 @@ namespace CodePlanner
             }
             
             // zkontrolujeme API klíč dřív, než začneme nahrávat
-            var nastaveni = GeminiNastaveni.Nacti();
-            if (string.IsNullOrWhiteSpace(nastaveni.EfektivniApiKey))
+            var nastaveni = GeminiSettings.Load();
+            if (string.IsNullOrWhiteSpace(nastaveni.EffectiveApiKey))
             {
                 MessageBox.Show(this,
                     "Není nastaven API klíč pro Gemini.\nPro diktování je nutné mít nastaven klíč v Nastavení AI.",
@@ -2062,7 +2062,7 @@ namespace CodePlanner
             _casSpusteniDiktovani = DateTime.Now;
             try
             {
-                HlasovyVstup.SpustNahravani();
+                VoiceRecorder.StartRecording();
                 _tlacitkoDiktovaniAktivni = b;
                 _diktovaniLimitTimer.Stop();
                 _diktovaniLimitTimer.Start();   // pojistka: auto-stop po 3 minutách
@@ -2121,7 +2121,7 @@ namespace CodePlanner
             _tlacitkoDiktovaniAktivni = null;
 
             Stav("Zastavuji nahrávání...");
-            string cestaWav = HlasovyVstup.ZastavNahravani();
+            string cestaWav = VoiceRecorder.StopRecording();
 
             // obnovíme výchozí vzhled tlačítka
             if (b == btnDiktovatNapad)
@@ -2169,11 +2169,11 @@ namespace CodePlanner
 
             try
             {
-                var nastaveni = GeminiNastaveni.Nacti();
+                var nastaveni = GeminiSettings.Load();
                 string model = nastaveni.GeminiModel;
-                string apiKey = nastaveni.EfektivniApiKey;
+                string apiKey = nastaveni.EffectiveApiKey;
 
-                string prepis = await GeminiService.PrepisAudioAsync(apiKey, model, cestaWav);
+                string prepis = await GeminiService.TranscribeAudioAsync(apiKey, model, cestaWav);
                 
                 if (this.IsDisposed || !this.Created) return;
                 if (cil == null || cil.IsDisposed) return;
@@ -2241,7 +2241,7 @@ namespace CodePlanner
         {
             if (btnReferencie == null) return;
 
-            if (string.IsNullOrWhiteSpace(_projekt.ReferencniText))
+            if (string.IsNullOrWhiteSpace(_projekt.ReferenceText))
             {
                 btnReferencie.Text = "📎 Připojit podklad";
                 btnReferencie.BackColor = Color.Gainsboro;
@@ -2250,7 +2250,7 @@ namespace CodePlanner
             }
             else
             {
-                string zkracenyNazev = _projekt.ReferencniNazev ?? "příloha.txt";
+                string zkracenyNazev = _projekt.ReferenceName ?? "příloha.txt";
                 if (zkracenyNazev.Length > 20)
                 {
                     zkracenyNazev = zkracenyNazev.Substring(0, 17) + "...";
@@ -2258,13 +2258,13 @@ namespace CodePlanner
                 btnReferencie.Text = "📎 " + zkracenyNazev;
                 btnReferencie.BackColor = TealSvetla;
                 btnReferencie.ForeColor = Navy;
-                _tipReference.SetToolTip(btnReferencie, $"Připojen soubor: {_projekt.ReferencniNazev}\nObsah: {(_projekt.ReferencniText.Length > 100 ? _projekt.ReferencniText.Substring(0, 100) + "..." : _projekt.ReferencniText)}\n\nKliknutím zobrazíte možnosti.");
+                _tipReference.SetToolTip(btnReferencie, $"Připojen soubor: {_projekt.ReferenceName}\nObsah: {(_projekt.ReferenceText.Length > 100 ? _projekt.ReferenceText.Substring(0, 100) + "..." : _projekt.ReferenceText)}\n\nKliknutím zobrazíte možnosti.");
             }
         }
 
         private void BtnReferencie_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(_projekt.ReferencniText))
+            if (string.IsNullOrWhiteSpace(_projekt.ReferenceText))
             {
                 NahratReferenci();
             }
@@ -2298,13 +2298,13 @@ namespace CodePlanner
                         return;
                     }
 
-                    _projekt.ReferencniText = text;
-                    _projekt.ReferencniNazev = Path.GetFileName(dlg.FileName);
-                    SpecSluzba.Zmena(_projekt, "Příloha", $"Připojen referenční soubor {_projekt.ReferencniNazev}.");
+                    _projekt.ReferenceText = text;
+                    _projekt.ReferenceName = Path.GetFileName(dlg.FileName);
+                    SpecificationService.LogChange(_projekt, "Příloha", $"Připojen referenční soubor {_projekt.ReferenceName}.");
 
                     OznacZmenu();
                     ObnovVse();
-                    Stav($"Připojen soubor: {_projekt.ReferencniNazev}");
+                    Stav($"Připojen soubor: {_projekt.ReferenceName}");
                 }
                 catch (Exception ex)
                 {
@@ -2315,11 +2315,11 @@ namespace CodePlanner
 
         private void ZobrazitObsahReferenci()
         {
-            if (string.IsNullOrWhiteSpace(_projekt.ReferencniText)) return;
+            if (string.IsNullOrWhiteSpace(_projekt.ReferenceText)) return;
 
             using var dlg = new Form
             {
-                Text = $"Obsah přílohy: {_projekt.ReferencniNazev}",
+                Text = $"Obsah přílohy: {_projekt.ReferenceName}",
                 Size = new Size(600, 500),
                 StartPosition = FormStartPosition.CenterParent,
                 MinimizeBox = false,
@@ -2333,7 +2333,7 @@ namespace CodePlanner
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Both,
-                Text = _projekt.ReferencniText,
+                Text = _projekt.ReferenceText,
                 Font = new Font("Consolas", 10f)
             };
 
@@ -2343,12 +2343,12 @@ namespace CodePlanner
 
         private void OdebratReferenci()
         {
-            if (string.IsNullOrWhiteSpace(_projekt.ReferencniText)) return;
+            if (string.IsNullOrWhiteSpace(_projekt.ReferenceText)) return;
 
-            string nazev = _projekt.ReferencniNazev;
-            _projekt.ReferencniText = null;
-            _projekt.ReferencniNazev = null;
-            SpecSluzba.Zmena(_projekt, "Příloha", $"Odebrán referenční soubor {nazev}.");
+            string nazev = _projekt.ReferenceName;
+            _projekt.ReferenceText = null;
+            _projekt.ReferenceName = null;
+            SpecificationService.LogChange(_projekt, "Příloha", $"Odebrán referenční soubor {nazev}.");
 
             OznacZmenu();
             ObnovVse();
@@ -2371,7 +2371,7 @@ namespace CodePlanner
             }
             else
             {
-                string zkracenyNazev = _projekt.MockupNazev ?? "skica.png";
+                string zkracenyNazev = _projekt.MockupName ?? "skica.png";
                 if (zkracenyNazev.Length > 20)
                 {
                     zkracenyNazev = zkracenyNazev.Substring(0, 17) + "...";
@@ -2381,7 +2381,7 @@ namespace CodePlanner
                 btnMockup.ForeColor = Navy;
                 if (_tipReference != null)
                 {
-                    _tipReference.SetToolTip(btnMockup, $"Připojen vizuální mockup: {_projekt.MockupNazev}\n\nKliknutím zobrazíte možnosti.");
+                    _tipReference.SetToolTip(btnMockup, $"Připojen vizuální mockup: {_projekt.MockupName}\n\nKliknutím zobrazíte možnosti.");
                 }
             }
         }
@@ -2437,12 +2437,12 @@ namespace CodePlanner
                     }
 
                     _projekt.MockupBase64 = Convert.ToBase64String(bytes);
-                    _projekt.MockupNazev = Path.GetFileName(dlg.FileName);
-                    SpecSluzba.Zmena(_projekt, "Skica", $"Připojen vizuální mockup {_projekt.MockupNazev}.");
+                    _projekt.MockupName = Path.GetFileName(dlg.FileName);
+                    SpecificationService.LogChange(_projekt, "Skica", $"Připojen vizuální mockup {_projekt.MockupName}.");
 
                     OznacZmenu();
                     ObnovVse();
-                    Stav($"Připojen vizuální mockup: {_projekt.MockupNazev}");
+                    Stav($"Připojen vizuální mockup: {_projekt.MockupName}");
                 }
                 catch (Exception ex)
                 {
@@ -2462,7 +2462,7 @@ namespace CodePlanner
                 using (var img = Image.FromStream(ms))
                 using (var dlg = new Form
                 {
-                    Text = $"Prohlížeč skici: {_projekt.MockupNazev}",
+                    Text = $"Prohlížeč skici: {_projekt.MockupName}",
                     Size = new Size(800, 600),
                     StartPosition = FormStartPosition.CenterParent,
                     MinimizeBox = false,
@@ -2494,10 +2494,10 @@ namespace CodePlanner
         {
             if (string.IsNullOrWhiteSpace(_projekt.MockupBase64)) return;
 
-            string nazev = _projekt.MockupNazev;
+            string nazev = _projekt.MockupName;
             _projekt.MockupBase64 = null;
-            _projekt.MockupNazev = null;
-            SpecSluzba.Zmena(_projekt, "Skica", $"Odebrán vizuální mockup {nazev}.");
+            _projekt.MockupName = null;
+            SpecificationService.LogChange(_projekt, "Skica", $"Odebrán vizuální mockup {nazev}.");
 
             OznacZmenu();
             ObnovVse();
@@ -2510,15 +2510,15 @@ namespace CodePlanner
 
             btnOtevritSplit.DropDownItems.Clear();
 
-            var nastaveni = GeminiNastaveni.Nacti();
-            if (nastaveni.NedavneProjekty == null || nastaveni.NedavneProjekty.Count == 0)
+            var nastaveni = GeminiSettings.Load();
+            if (nastaveni.RecentProjects == null || nastaveni.RecentProjects.Count == 0)
             {
                 var emptyItem = new ToolStripMenuItem("Žádné nedávné projekty") { Enabled = false };
                 btnOtevritSplit.DropDownItems.Add(emptyItem);
                 return;
             }
 
-            foreach (var cesta in nastaveni.NedavneProjekty)
+            foreach (var cesta in nastaveni.RecentProjects)
             {
                 if (string.IsNullOrWhiteSpace(cesta)) continue;
 
@@ -2543,9 +2543,9 @@ namespace CodePlanner
                 var confirm = MessageBox.Show(this, "Opravdu chcete vymazat historii nedávných projektů?", "Vymazat historii", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (confirm == DialogResult.Yes)
                 {
-                    var nast = GeminiNastaveni.Nacti();
-                    nast.NedavneProjekty.Clear();
-                    nast.Uloz();
+                    var nast = GeminiSettings.Load();
+                    nast.RecentProjects.Clear();
+                    nast.Save();
                     ObnovNedavneMenu();
                 }
             });
@@ -2558,15 +2558,15 @@ namespace CodePlanner
             cmbTyp.Items.Clear();
 
             // Přidáme built-in typy
-            cmbTyp.Items.Add(new ComboItemTypProjektu { Klic = "Obecna", Nazev = "Obecná aplikace" });
-            cmbTyp.Items.Add(new ComboItemTypProjektu { Klic = "Hra", Nazev = "Hra (Game)" });
-            cmbTyp.Items.Add(new ComboItemTypProjektu { Klic = "Evidence", Nazev = "Evidence / Registr" });
-            cmbTyp.Items.Add(new ComboItemTypProjektu { Klic = "Nastroj", Nazev = "Nástroj / Utilita" });
+            cmbTyp.Items.Add(new ProjectTypeComboItem { Key = "Obecna", Name = "Obecná aplikace" });
+            cmbTyp.Items.Add(new ProjectTypeComboItem { Key = "Hra", Name = "Hra (Game)" });
+            cmbTyp.Items.Add(new ProjectTypeComboItem { Key = "Evidence", Name = "Evidence / Registr" });
+            cmbTyp.Items.Add(new ProjectTypeComboItem { Key = "Nastroj", Name = "Nástroj / Utilita" });
 
             // Přidáme custom šablony
-            foreach (var sab in SablonaSluzba.CustomSablony)
+            foreach (var sab in TemplateService.CustomTemplates)
             {
-                cmbTyp.Items.Add(new ComboItemTypProjektu { Klic = sab.Klic, Nazev = sab.Nazev });
+                cmbTyp.Items.Add(new ProjectTypeComboItem { Key = sab.Key, Name = sab.Name });
             }
 
             _nacitani = false;
@@ -2577,7 +2577,7 @@ namespace CodePlanner
             _nacitani = true;
             for (int i = 0; i < cmbTyp.Items.Count; i++)
             {
-                if (cmbTyp.Items[i] is ComboItemTypProjektu item && string.Equals(item.Klic, typKlic, StringComparison.OrdinalIgnoreCase))
+                if (cmbTyp.Items[i] is ProjectTypeComboItem item && string.Equals(item.Key, typKlic, StringComparison.OrdinalIgnoreCase))
                 {
                     cmbTyp.SelectedIndex = i;
                     _nacitani = false;
@@ -2611,7 +2611,7 @@ namespace CodePlanner
                 bool isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
                 rtbChatLog.SelectionFont = _chatFontBold;
                 rtbChatLog.SelectionColor = isUser ? Navy : Teal;
-                string casText = msg.Cas == default ? "" : $" [{msg.Cas:H:mm}]";
+                string casText = msg.Timestamp == default ? "" : $" [{msg.Timestamp:H:mm}]";
                 rtbChatLog.AppendText(isUser ? $"Já{casText}: " : $"Asistent{casText}: ");
 
                 rtbChatLog.SelectionFont = _chatFontRegular;
@@ -2638,8 +2638,8 @@ namespace CodePlanner
             }
 
             // kontrola API klíče předem – zpráva se nesmí dostat do historie
-            var nastaveni = GeminiNastaveni.Nacti();
-            if (string.IsNullOrWhiteSpace(nastaveni.EfektivniApiKey))
+            var nastaveni = GeminiSettings.Load();
+            if (string.IsNullOrWhiteSpace(nastaveni.EffectiveApiKey))
             {
                 MessageBox.Show(this,
                     "Není nastaven API klíč pro Gemini.\nOtevřete prosím Nastavení AI a zadejte klíč.",
@@ -2660,7 +2660,7 @@ namespace CodePlanner
                 _projekt.ChatHistory = new List<ChatMessage>();
             }
 
-            var uzivatelZprava = new ChatMessage { Role = "user", Text = text, Cas = DateTime.Now };
+            var uzivatelZprava = new ChatMessage { Role = "user", Text = text, Timestamp = DateTime.Now };
             _projekt.ChatHistory.Add(uzivatelZprava);
             OznacZmenu();
             VykresliHistoriiChatu();
@@ -2673,11 +2673,11 @@ namespace CodePlanner
 
             try
             {
-                string odpoved = await GeminiService.PosliChatZpravuAsync(nastaveni.EfektivniApiKey, nastaveni.GeminiModel, _projekt, _projekt.ChatHistory, _ctsChat.Token);
+                string odpoved = await GeminiService.SendChatMessageAsync(nastaveni.EffectiveApiKey, nastaveni.GeminiModel, _projekt, _projekt.ChatHistory, _ctsChat.Token);
 
                 if (this.IsDisposed || !this.Created) return;
 
-                var modelZprava = new ChatMessage { Role = "model", Text = odpoved, Cas = DateTime.Now };
+                var modelZprava = new ChatMessage { Role = "model", Text = odpoved, Timestamp = DateTime.Now };
                 _projekt.ChatHistory.Add(modelZprava);
                 OznacZmenu();
                 VykresliHistoriiChatu();
@@ -2757,7 +2757,7 @@ namespace CodePlanner
 
             try
             {
-                SpecSluzba.UlozProjekt(_projekt, CestaAutosave);
+                SpecificationService.SaveProject(_projekt, CestaAutosave);
             }
             catch
             {
@@ -2766,9 +2766,9 @@ namespace CodePlanner
         }
 
         private bool ProjektJePrazdny()
-            => string.IsNullOrWhiteSpace(_projekt.Nazev)
-               && string.IsNullOrWhiteSpace(_projekt.Napad)
-               && _projekt.Odpovedi.Count == 0
+            => string.IsNullOrWhiteSpace(_projekt.Name)
+               && string.IsNullOrWhiteSpace(_projekt.Idea)
+               && _projekt.Answers.Count == 0
                && (_projekt.ChatHistory == null || _projekt.ChatHistory.Count == 0);
 
         private static void SmazAutosave()
@@ -2790,7 +2790,7 @@ namespace CodePlanner
 
                 if (res == DialogResult.Yes)
                 {
-                    var projekt = SpecSluzba.NactiProjekt(CestaAutosave);
+                    var projekt = SpecificationService.LoadProject(CestaAutosave);
                     _cestaSouboru = null;   // záloha nemá „domovský“ soubor – uložení si vyžádá cestu
                     NactiProjektDoUi(projekt);
                     OznacZmenu();
@@ -2808,19 +2808,19 @@ namespace CodePlanner
         }
 
         /// <summary>Nahradí aktuální projekt daty z jiné instance a obnoví celé UI (ponechá _cestaSouboru beze změny).</summary>
-        private void NactiProjektDoUi(SpecProjekt novy)
+        private void NactiProjektDoUi(ProjectSpecification novy)
         {
-            _projekt = novy ?? new SpecProjekt();
+            _projekt = novy ?? new ProjectSpecification();
 
             _nacitani = true;
-            txtNazev.Text = _projekt.Nazev ?? "";
-            txtNapad.Text = _projekt.Napad ?? "";
-            NastavTypCombo(_projekt.TypProjektuKlic);
+            txtNazev.Text = _projekt.Name ?? "";
+            txtNapad.Text = _projekt.Idea ?? "";
+            NastavTypCombo(_projekt.ProjectTypeKey);
             txtOdpoved.Text = "";
             _nacitani = false;
 
             ObnovVse();
-            VyberOtazku(SpecSluzba.DalsiNezodpovezena(_projekt));
+            VyberOtazku(SpecificationService.GetNextUnansweredQuestion(_projekt));
         }
 
         /// <summary>„↩ Vrátit analýzu“ – obnoví projekt ze zálohy vytvořené těsně před poslední AI analýzou.</summary>
@@ -2841,7 +2841,7 @@ namespace CodePlanner
 
             try
             {
-                var projekt = SpecSluzba.NactiProjekt(CestaZalohyPredAnalyzou);
+                var projekt = SpecificationService.LoadProject(CestaZalohyPredAnalyzou);
                 NactiProjektDoUi(projekt);
                 OznacZmenu();
                 Stav("Projekt vrácen do stavu před AI analýzou.");
@@ -2864,15 +2864,15 @@ namespace CodePlanner
         private void ObnovApiBanner()
         {
             if (lblApiBanner == null) return;
-            var nastaveni = GeminiNastaveni.Nacti();
-            lblApiBanner.Visible = string.IsNullOrWhiteSpace(nastaveni.EfektivniApiKey);
+            var nastaveni = GeminiSettings.Load();
+            lblApiBanner.Visible = string.IsNullOrWhiteSpace(nastaveni.EffectiveApiKey);
         }
 
         /// <summary>Po AI analýze je typ projektu daný vygenerovanými otázkami – combo se zamkne.</summary>
         private void ObnovComboTypu()
         {
             if (cmbTyp == null) return;
-            bool zafixovan = _projekt?.Otazky != null && _projekt.Otazky.Count > 0;
+            bool zafixovan = _projekt?.Questions != null && _projekt.Questions.Count > 0;
             cmbTyp.Enabled = !zafixovan && !_isBusy;
             _tipReference?.SetToolTip(cmbTyp, zafixovan
                 ? "Typ je zafixován AI analýzou – nová analýza ho může změnit."
@@ -2882,12 +2882,12 @@ namespace CodePlanner
         /// <summary>Před exportem shrne, co ve specifikaci ještě chybí nebo je zastaralé. Vrací true = exportovat.</summary>
         private bool PotvrdExportSeSouhrnem()
         {
-            int celkem = SpecSluzba.VratOtazkyProjektu(_projekt).Count();
-            int zodpovezeno = SpecSluzba.PocetZodpovezenych(_projekt) + SpecSluzba.PocetPredpokladu(_projekt);
-            int otevrene = SpecSluzba.OtevreneOtazky(_projekt).Count;
-            int nalezy = KonzistencniKontrola.Zkontroluj(_projekt).Count;
-            bool metrikyStare = SpecSluzba.MetrikyJsouZastarale(_projekt);
-            bool storiesStare = SpecSluzba.StoriesJsouZastarale(_projekt);
+            int celkem = SpecificationService.GetProjectQuestions(_projekt).Count();
+            int zodpovezeno = SpecificationService.GetAnsweredCount(_projekt) + SpecificationService.GetAssumptionsCount(_projekt);
+            int otevrene = SpecificationService.GetOpenQuestions(_projekt).Count;
+            int nalezy = ConsistencyChecker.Check(_projekt).Count;
+            bool metrikyStare = SpecificationService.AreMetricsOutdated(_projekt);
+            bool storiesStare = SpecificationService.AreStoriesOutdated(_projekt);
 
             if (otevrene == 0 && nalezy == 0 && !metrikyStare && !storiesStare) return true;
 

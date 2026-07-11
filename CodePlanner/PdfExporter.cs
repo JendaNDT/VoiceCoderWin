@@ -13,16 +13,16 @@ namespace CodePlanner
 {
     public class PdfExporter
     {
-        private readonly SpecProjekt _projekt;
+        private readonly ProjectSpecification _project;
         private readonly List<string> _radky;
         private int _aktualniRadek = 0;
         private int _vnitrniRadekIndex = 0;
         private int _strana = 0;
 
-        public PdfExporter(SpecProjekt projekt)
+        public PdfExporter(ProjectSpecification project)
         {
-            _projekt = projekt;
-            string md = SpecSluzba.RenderMarkdown(projekt);
+            _project = project;
+            string md = SpecificationService.RenderMarkdown(project);
             _radky = md.Replace("\r\n", "\n").Split('\n').ToList();
         }
 
@@ -67,10 +67,10 @@ namespace CodePlanner
             float marginR = e.MarginBounds.Right;
             float marginB = e.MarginBounds.Bottom;
 
-            // Barvy
-            var navy = Color.FromArgb(16, 35, 63);
-            var teal = Color.FromArgb(23, 176, 160);
-            var oranzova = Color.FromArgb(230, 140, 0);
+            // Barvy z DesignSystem
+            var navy = DesignSystem.Navy;
+            var teal = DesignSystem.Teal;
+            var oranzova = DesignSystem.Oranzova;
 
             if (_strana == 1)
             {
@@ -98,7 +98,7 @@ namespace CodePlanner
                 }
 
                 startY += 30;
-                string nazev = string.IsNullOrWhiteSpace(_projekt.Nazev) ? "Nový projekt" : _projekt.Nazev.Trim();
+                string nazev = string.IsNullOrWhiteSpace(_project.Name) ? "Nový projekt" : _project.Name.Trim();
                 using (var fTitle = new Font("Segoe UI", 26f, FontStyle.Bold))
                 using (var bNavy = new SolidBrush(navy))
                 {
@@ -120,13 +120,13 @@ namespace CodePlanner
                 using (var bGray = new SolidBrush(Color.DimGray))
                 {
                     g.DrawString("Verze specifikace:", fLabel, bNavy, startX, startY);
-                    g.DrawString(_projekt.Verze.ToString(), fVal, bGray, startX + 130, startY);
+                    g.DrawString(_project.Version.ToString(), fVal, bGray, startX + 130, startY);
 
                     g.DrawString("Datum vygenerování:", fLabel, bNavy, startX, startY + 22);
                     g.DrawString(DateTime.Now.ToString("d. M. yyyy"), fVal, bGray, startX + 130, startY + 22);
 
                     g.DrawString("Typ / Šablona:", fLabel, bNavy, startX, startY + 44);
-                    g.DrawString(SpecSluzba.VratNazevTypu(_projekt.TypProjektuKlic), fVal, bGray, startX + 130, startY + 44);
+                    g.DrawString(SpecificationService.GetProjectTypeName(_project.ProjectTypeKey), fVal, bGray, startX + 130, startY + 44);
 
                     g.DrawString("Nástroj:", fLabel, bNavy, startX, startY + 66);
                     g.DrawString("CodePlanner (AI-Powered)", fVal, bGray, startX + 130, startY + 66);
@@ -144,7 +144,7 @@ namespace CodePlanner
             using (var bGray = new SolidBrush(Color.Gray))
             using (var pen = new Pen(Color.FromArgb(220, 224, 230), 0.75f))
             {
-                string headText = $"Specifikace projektu: {(_projekt.Nazev ?? "nový projekt")}";
+                string headText = $"Specifikace projektu: {(_project.Name ?? "nový projekt")}";
                 g.DrawString(headText, fHead, bGray, marginL, marginT - 25);
                 g.DrawLine(pen, marginL, marginT - 12, marginR, marginT - 12);
             }

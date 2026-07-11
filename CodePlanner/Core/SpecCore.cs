@@ -1,35 +1,35 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace CodePlanner.Core
 {
-    /// <summary>Dopad otázky na projekt – řídí pořadí dotazování (question planner dle návrhu, kap. 7).</summary>
-    public enum Dopad
+    /// <summary>Impact of the question on the project – controls question planning.</summary>
+    public enum Impact
     {
-        Vysoky,
-        Stredni
+        High,
+        Medium
     }
 
-    public class SablonaProjektu
+    public class ProjectTemplate
     {
         [JsonPropertyName("klic")]
-        public string Klic { get; set; } = "";
+        public string Key { get; set; } = "";
 
         [JsonPropertyName("nazev")]
-        public string Nazev { get; set; } = "";
+        public string Name { get; set; } = "";
 
         [JsonPropertyName("otazky")]
-        public List<SablonaOtazka> Otazky { get; set; } = new List<SablonaOtazka>();
+        public List<TemplateQuestion> Questions { get; set; } = new List<TemplateQuestion>();
     }
 
-    public class SablonaOtazka
+    public class TemplateQuestion
     {
         [JsonPropertyName("id")]
         public string Id { get; set; } = "";
@@ -38,86 +38,86 @@ namespace CodePlanner.Core
         public string Text { get; set; } = "";
 
         [JsonPropertyName("napoveda")]
-        public string Napoveda { get; set; } = "";
+        public string HelpText { get; set; } = "";
 
         [JsonPropertyName("vychoziPredpoklad")]
-        public string VychoziPredpoklad { get; set; } = "";
+        public string DefaultAssumption { get; set; } = "";
 
         [JsonPropertyName("moznosti")]
-        public List<string> Moznosti { get; set; } = new List<string>();
+        public List<string> Options { get; set; } = new List<string>();
     }
 
-    public static class SablonaSluzba
+    public static class TemplateService
     {
-        public static List<SablonaProjektu> CustomSablony { get; private set; } = new List<SablonaProjektu>();
+        public static List<ProjectTemplate> CustomTemplates { get; private set; } = new List<ProjectTemplate>();
 
-        public static void NactiCustomSablony()
+        public static void LoadCustomTemplates()
         {
-            CustomSablony = new List<SablonaProjektu>();
+            CustomTemplates = new List<ProjectTemplate>();
             try
             {
-                string cesta = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sablony.json");
-                if (File.Exists(cesta))
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sablony.json");
+                if (File.Exists(path))
                 {
-                    string json = File.ReadAllText(cesta);
+                    string json = File.ReadAllText(path);
                     var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var data = JsonSerializer.Deserialize<Dictionary<string, List<SablonaProjektu>>>(json, opt);
+                    var data = JsonSerializer.Deserialize<Dictionary<string, List<ProjectTemplate>>>(json, opt);
                     if (data != null && data.TryGetValue("sablony", out var list))
                     {
-                        CustomSablony = list;
+                        CustomTemplates = list;
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Chyba při načítání custom šablon: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error loading custom templates: {ex.Message}");
             }
         }
     }
 
-    /// <summary>Typ projektu / Šablona otázek.</summary>
-    public enum TypProjektu
+    /// <summary>Project Type / Question Template.</summary>
+    public enum ProjectType
     {
-        Obecna,
-        Hra,
-        Evidence,
-        Nastroj
+        General,
+        Game,
+        Registry,
+        Tool
     }
 
-    /// <summary>Jedna řízená otázka. Otázky s vysokým dopadem jdou první.</summary>
-    public class Otazka
+    /// <summary>One guided question. High-impact questions go first.</summary>
+    public class Question
     {
         public string Id { get; set; } = "";
         public string Text { get; set; } = "";
-        public string Napoveda { get; set; } = "";
-        public Dopad Dopad { get; set; }
-        public string Sekce { get; set; } = "";
-        public string VychoziPredpoklad { get; set; } = "";
-        public List<string> Moznosti { get; set; } = new List<string>();
+        public string HelpText { get; set; } = "";
+        public Impact Impact { get; set; }
+        public string Section { get; set; } = "";
+        public string DefaultAssumption { get; set; } = "";
+        public List<string> Options { get; set; } = new List<string>();
 
-        // Slovníky pro šablonové texty
+        // Dicts for template texts
         [JsonIgnore]
-        public Dictionary<TypProjektu, string> Texty { get; set; } = new Dictionary<TypProjektu, string>();
+        public Dictionary<ProjectType, string> Texts { get; set; } = new Dictionary<ProjectType, string>();
         [JsonIgnore]
-        public Dictionary<TypProjektu, string> Napovedy { get; set; } = new Dictionary<TypProjektu, string>();
+        public Dictionary<ProjectType, string> Helps { get; set; } = new Dictionary<ProjectType, string>();
         [JsonIgnore]
-        public Dictionary<TypProjektu, string> Predpoklady { get; set; } = new Dictionary<TypProjektu, string>();
+        public Dictionary<ProjectType, string> Assumptions { get; set; } = new Dictionary<ProjectType, string>();
 
-        public List<string> GetMoznosti(string typKlic)
+        public List<string> GetOptions(string typeKey)
         {
-            var sablona = SablonaSluzba.CustomSablony.FirstOrDefault(s => string.Equals(s.Klic, typKlic, StringComparison.OrdinalIgnoreCase));
-            if (sablona != null)
+            var template = TemplateService.CustomTemplates.FirstOrDefault(s => string.Equals(s.Key, typeKey, StringComparison.OrdinalIgnoreCase));
+            if (template != null)
             {
-                var ot = sablona.Otazky.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
-                if (ot != null && ot.Moznosti != null && ot.Moznosti.Count > 0) return ot.Moznosti;
+                var ot = template.Questions.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
+                if (ot != null && ot.Options != null && ot.Options.Count > 0) return ot.Options;
             }
 
-            if (Moznosti != null && Moznosti.Count > 0) return Moznosti;
+            if (Options != null && Options.Count > 0) return Options;
 
-            return VratVychoziMoznostiProId(Id);
+            return GetDefaultOptionsForId(Id);
         }
 
-        private static List<string> VratVychoziMoznostiProId(string id)
+        private static List<string> GetDefaultOptionsForId(string id)
         {
             switch (id)
             {
@@ -138,453 +138,458 @@ namespace CodePlanner.Core
             }
         }
 
-        public string GetText(string typKlic)
+        public string GetText(string typeKey)
         {
-            if (Enum.TryParse<TypProjektu>(typKlic, true, out var enumTyp))
+            if (Enum.TryParse<ProjectType>(typeKey, true, out var enumType))
             {
-                if (enumTyp == TypProjektu.Obecna) return Text;
-                return Texty.TryGetValue(enumTyp, out var val) && !string.IsNullOrWhiteSpace(val) ? val : Text;
+                if (enumType == ProjectType.General) return Text;
+                return Texts.TryGetValue(enumType, out var val) && !string.IsNullOrWhiteSpace(val) ? val : Text;
             }
 
-            var sablona = SablonaSluzba.CustomSablony.FirstOrDefault(s => string.Equals(s.Klic, typKlic, StringComparison.OrdinalIgnoreCase));
-            if (sablona != null)
+            var template = TemplateService.CustomTemplates.FirstOrDefault(s => string.Equals(s.Key, typeKey, StringComparison.OrdinalIgnoreCase));
+            if (template != null)
             {
-                var ot = sablona.Otazky.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
+                var ot = template.Questions.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
                 if (ot != null && !string.IsNullOrWhiteSpace(ot.Text)) return ot.Text;
             }
 
             return Text;
         }
 
-        public string GetNapoveda(string typKlic)
+        public string GetHelpText(string typeKey)
         {
-            if (Enum.TryParse<TypProjektu>(typKlic, true, out var enumTyp))
+            if (Enum.TryParse<ProjectType>(typeKey, true, out var enumType))
             {
-                if (enumTyp == TypProjektu.Obecna) return Napoveda;
-                return Napovedy.TryGetValue(enumTyp, out var val) && !string.IsNullOrWhiteSpace(val) ? val : Napoveda;
+                if (enumType == ProjectType.General) return HelpText;
+                return Helps.TryGetValue(enumType, out var val) && !string.IsNullOrWhiteSpace(val) ? val : HelpText;
             }
 
-            var sablona = SablonaSluzba.CustomSablony.FirstOrDefault(s => string.Equals(s.Klic, typKlic, StringComparison.OrdinalIgnoreCase));
-            if (sablona != null)
+            var template = TemplateService.CustomTemplates.FirstOrDefault(s => string.Equals(s.Key, typeKey, StringComparison.OrdinalIgnoreCase));
+            if (template != null)
             {
-                var ot = sablona.Otazky.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
-                if (ot != null && !string.IsNullOrWhiteSpace(ot.Napoveda)) return ot.Napoveda;
+                var ot = template.Questions.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
+                if (ot != null && !string.IsNullOrWhiteSpace(ot.HelpText)) return ot.HelpText;
             }
 
-            return Napoveda;
+            return HelpText;
         }
 
-        public string GetVychoziPredpoklad(string typKlic)
+        public string GetDefaultAssumption(string typeKey)
         {
-            if (Enum.TryParse<TypProjektu>(typKlic, true, out var enumTyp))
+            if (Enum.TryParse<ProjectType>(typeKey, true, out var enumType))
             {
-                if (enumTyp == TypProjektu.Obecna) return VychoziPredpoklad;
-                return Predpoklady.TryGetValue(enumTyp, out var val) && !string.IsNullOrWhiteSpace(val) ? val : VychoziPredpoklad;
+                if (enumType == ProjectType.General) return DefaultAssumption;
+                return Assumptions.TryGetValue(enumType, out var val) && !string.IsNullOrWhiteSpace(val) ? val : DefaultAssumption;
             }
 
-            var sablona = SablonaSluzba.CustomSablony.FirstOrDefault(s => string.Equals(s.Klic, typKlic, StringComparison.OrdinalIgnoreCase));
-            if (sablona != null)
+            var template = TemplateService.CustomTemplates.FirstOrDefault(s => string.Equals(s.Key, typeKey, StringComparison.OrdinalIgnoreCase));
+            if (template != null)
             {
-                var ot = sablona.Otazky.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
-                if (ot != null && !string.IsNullOrWhiteSpace(ot.VychoziPredpoklad)) return ot.VychoziPredpoklad;
+                var ot = template.Questions.FirstOrDefault(o => string.Equals(o.Id, Id, StringComparison.OrdinalIgnoreCase));
+                if (ot != null && !string.IsNullOrWhiteSpace(ot.DefaultAssumption)) return ot.DefaultAssumption;
             }
 
-            return VychoziPredpoklad;
+            return DefaultAssumption;
         }
 
-        public string GetText(TypProjektu typ) => GetText(typ.ToString());
-        public string GetNapoveda(TypProjektu typ) => GetNapoveda(typ.ToString());
-        public string GetVychoziPredpoklad(TypProjektu typ) => GetVychoziPredpoklad(typ.ToString());
+        public string GetText(ProjectType typ) => GetText(typ.ToString());
+        public string GetHelpText(ProjectType typ) => GetHelpText(typ.ToString());
+        public string GetDefaultAssumption(ProjectType typ) => GetDefaultAssumption(typ.ToString());
     }
 
-    /// <summary>Odpověď uživatele, nebo označený předpoklad (kap. 7: „Drobnosti může vyplnit označeným předpokladem.“).</summary>
-    public class Odpoved
+    /// <summary>User response or marked assumption.</summary>
+    public class Answer
     {
-        public string OtazkaId { get; set; } = "";
+        public string QuestionId { get; set; } = "";
         public string Text { get; set; } = "";
-        public bool JePredpoklad { get; set; }
-        public DateTime Cas { get; set; }
+        public bool IsAssumption { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 
-    /// <summary>Záznam v logu rozhodnutí – každá změna má čas a důvod (kap. 7).</summary>
-    public class Rozhodnuti
+    /// <summary>Entry in the decision log.</summary>
+    public class DecisionLogEntry
     {
-        public DateTime Cas { get; set; }
-        public string Akce { get; set; } = "";
+        public DateTime Timestamp { get; set; }
+        public string Action { get; set; } = "";
         public string Detail { get; set; } = "";
     }
 
     public class UserStory
     {
         public string Id { get; set; } = "";
-        public string Titulek { get; set; } = "";
-        public string Popis { get; set; } = "";
-        public List<string> Kriteria { get; set; } = new List<string>();
-        public string Priorita { get; set; } = "Střední";
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public List<string> Criteria { get; set; } = new List<string>();
+        public string Priority { get; set; } = "Střední";
     }
 
     public class ChatMessage
     {
         public string Role { get; set; } = "user"; // "user" / "model"
         public string Text { get; set; } = "";
-        public DateTime Cas { get; set; } = DateTime.Now;
+        public DateTime Timestamp { get; set; } = DateTime.Now;
     }
 
-    public class ProjektMetriky
+    public class ProjectMetrics
     {
-        public string CasovyOdhadMin { get; set; } = "";
-        public string CasovyOdhadMax { get; set; } = "";
-        public string Komplexita { get; set; } = "";
-        public string SlozeniTymu { get; set; } = "";
-        public string DoporucenyRozpocet { get; set; } = "";
-        public string TechnickyRozbor { get; set; } = "";
-        public List<string> RizikaMetriky { get; set; } = new List<string>();
-        public DateTime CasVypoctu { get; set; }
+        public string TimeEstimateMin { get; set; } = "";
+        public string TimeEstimateMax { get; set; } = "";
+        public string Complexity { get; set; } = "";
+        public string TeamComposition { get; set; } = "";
+        public string RecommendedBudget { get; set; } = "";
+        public string TechnicalAnalysis { get; set; } = "";
+        public List<string> MetricRisks { get; set; } = new List<string>();
+        public DateTime CalculationTimestamp { get; set; }
     }
 
-    /// <summary>Jeden nález AI kontroly konzistence, uložený v projektu.
-    /// Tvar polí odpovídá 1:1 tomu, co dnes vrací GeminiService.AnalyzujKonzistenciAsync
-    /// (deserializace GeminiKonzistenceNalez → Nalez): závažnost „Rozpor“/„Varovani“, titulek a detail.</summary>
-    public class AiNalez
+    /// <summary>One consistency warning/finding.</summary>
+    public class AiFinding
     {
-        public string Zavaznost { get; set; } = "Varovani"; // "Rozpor" / "Varovani"
-        public string Titulek { get; set; } = "";
+        public string Severity { get; set; } = "Varovani"; // "Rozpor" / "Varovani"
+        public string Title { get; set; } = "";
         public string Detail { get; set; } = "";
 
-        /// <summary>Převod z výsledku GeminiService.AnalyzujKonzistenciAsync – NalezyForm tak může nálezy rovnou uložit.</summary>
-        public static AiNalez Z(Nalez nalez) => new AiNalez
+        public static AiFinding FromFinding(ConsistencyFinding nalez) => new AiFinding
         {
-            Zavaznost = nalez == null ? "Varovani" : nalez.Zavaznost.ToString(),
-            Titulek = nalez != null ? (nalez.Titulek ?? "") : "",
+            Severity = nalez == null ? "Varovani" : nalez.Severity.ToString(),
+            Title = nalez != null ? (nalez.Title ?? "") : "",
             Detail = nalez != null ? (nalez.Detail ?? "") : ""
         };
     }
 
-    /// <summary>Celý projekt = zdroj pravdy. Ukládá se jako .vcbrief (JSON).</summary>
-    public class SpecProjekt
+    /// <summary>Whole project / specification model.</summary>
+    public class ProjectSpecification
     {
-        public string Nazev { get; set; } = "";
-        public string Napad { get; set; } = "";
-        public TypProjektu TypProjektu { get; set; } = TypProjektu.Obecna;
+        public string Name { get; set; } = "";
+        public string Idea { get; set; } = "";
+        public ProjectType ProjectType { get; set; } = ProjectType.General;
 
-        private string _typProjektuKlic = null;
-        public string TypProjektuKlic
+        private string _projectTypeKey = null;
+        public string ProjectTypeKey
         {
             get
             {
-                if (string.IsNullOrWhiteSpace(_typProjektuKlic))
+                if (string.IsNullOrWhiteSpace(_projectTypeKey))
                 {
-                    return TypProjektu.ToString();
+                    return ProjectType.ToString();
                 }
-                return _typProjektuKlic;
+                return _projectTypeKey;
             }
-            set => _typProjektuKlic = value;
+            set => _projectTypeKey = value;
         }
 
-        public string ReferencniText { get; set; } = null;
-        public string ReferencniNazev { get; set; } = null;
+        public string ReferenceText { get; set; } = null;
+        public string ReferenceName { get; set; } = null;
         public string MockupBase64 { get; set; } = null;
-        public string MockupNazev { get; set; } = null;
-        public DateTime Vytvoreno { get; set; } = DateTime.Now;
-        public DateTime Upraveno { get; set; } = DateTime.Now;
-        public int Verze { get; set; } = 1;
-        public List<Odpoved> Odpovedi { get; set; } = new List<Odpoved>();
-        public List<Rozhodnuti> Log { get; set; } = new List<Rozhodnuti>();
-        public List<Otazka> Otazky { get; set; } = new List<Otazka>();
+        public string MockupName { get; set; } = null;
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public DateTime UpdatedAt { get; set; } = DateTime.Now;
+        public int Version { get; set; } = 1;
+        public List<Answer> Answers { get; set; } = new List<Answer>();
+        public List<DecisionLogEntry> ChangeLog { get; set; } = new List<DecisionLogEntry>();
+        public List<Question> Questions { get; set; } = new List<Question>();
         public List<UserStory> UserStories { get; set; } = new List<UserStory>();
         public List<ChatMessage> ChatHistory { get; set; } = new List<ChatMessage>();
-        public ProjektMetriky Metriky { get; set; } = new ProjektMetriky();
+        public ProjectMetrics Metrics { get; set; } = new ProjectMetrics();
 
-        /// <summary>Kdy byly naposledy vygenerovány user stories (null = zatím nikdy). Nastavuje UI po vygenerování.</summary>
-        public DateTime? CasGenerovaniStories { get; set; }
-
-        /// <summary>Nálezy poslední AI kontroly konzistence (prázdný seznam = zatím žádná neproběhla).</summary>
-        public List<AiNalez> AiNalezy { get; set; } = new List<AiNalez>();
-
-        /// <summary>Kdy naposledy proběhla AI kontrola konzistence (null = zatím nikdy). Nastavuje UI po kontrole.</summary>
-        public DateTime? CasAiKontroly { get; set; }
+        public DateTime? StoriesGenerationTimestamp { get; set; }
+        public List<AiFinding> AiFindings { get; set; } = new List<AiFinding>();
+        public DateTime? AiCheckTimestamp { get; set; }
     }
 
-    /// <summary>Pevná sada řízených otázek – seřazená podle dopadu (nejdřív rozhodnutí, která mění architekturu, cenu nebo bezpečnost).</summary>
-    public static class Otazky
+    /// <summary>Standard list of guided questions.</summary>
+    public static class StandardQuestions
     {
-        public static readonly IReadOnlyList<Otazka> Vse = new List<Otazka>
+        public static readonly IReadOnlyList<Question> All = new List<Question>
         {
-            new Otazka { Id = "cil-problem", Sekce = "Cíl a uživatelé", Dopad = Dopad.Vysoky,
+            new Question { Id = "cil-problem", Section = "Cíl a uživatelé", Impact = Impact.High,
                 Text = "Jaký problém má aplikace vyřešit a jaký přínos od ní čekáš?",
-                Napoveda = "Určuje smysl celé specifikace – všechno ostatní se od toho odvíjí.",
-                VychoziPredpoklad = "Přínos je popsán jen v původním nápadu; bude upřesněn po první ukázce.",
-                Texty = new Dictionary<TypProjektu, string>
+                HelpText = "Určuje smysl celé specifikace – všechno ostatní se od toho odvíjí.",
+                DefaultAssumption = "Přínos je popsán jen v původním nápadu; bude upřesněn po první ukázce.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Jaký zážitek má hra přinést a jaký je cíl hráče?" },
-                    { TypProjektu.Evidence, "Jaké objekty se budou evidovat a jaký přínos má jejich přehled přinést?" },
-                    { TypProjektu.Nastroj, "Jaký úkol nebo operaci má nástroj automatizovat a co je cílem?" }
+                    { ProjectType.Game, "Jaký zážitek má hra přinést a jaký je cíl hráče?" },
+                    { ProjectType.Registry, "Jaké objekty se budou evidovat a jaký přínos má jejich přehled přinést?" },
+                    { ProjectType.Tool, "Jaký úkol nebo operaci má nástroj automatizovat a co je cílem?" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "U her je hlavním přínosem zábava, hratelnost, odreagování nebo skóre." },
-                    { TypProjektu.Evidence, "U evidencí jde o přehlednost, rychlé vyhledávání a spolehlivé ukládání." },
-                    { TypProjektu.Nastroj, "U nástrojů jde o úsporu času a eliminaci lidských chyb při rutinní práci." }
+                    { ProjectType.Game, "U her je hlavním přínosem zábava, hratelnost, odreagování nebo skóre." },
+                    { ProjectType.Registry, "U evidencí jde o přehlednost, rychlé vyhledávání a spolehlivé ukládání." },
+                    { ProjectType.Tool, "U nástrojů jde o úsporu času a eliminaci lidských chyb při rutinní práci." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Hra pro zábavu, cíl hráče je dosáhnout co nejvyššího skóre." },
-                    { TypProjektu.Evidence, "Evidence a přehledné ukládání specifických záznamů s možností filtrování." },
-                    { TypProjektu.Nastroj, "Jednoúčelový nástroj pro automatizaci specifického úkonu a úsporu času." }
+                    { ProjectType.Game, "Hra pro zábavu, cíl hráče je dosáhnout co nejvyššího skóre." },
+                    { ProjectType.Registry, "Evidence a přehledné ukládání specifických záznamů s možností filtrování." },
+                    { ProjectType.Tool, "Jednoúčelový nástroj pro automatizaci specifického úkonu a úsporu času." }
                 }
             },
 
-            new Otazka { Id = "cil-uzivatele", Sekce = "Cíl a uživatelé", Dopad = Dopad.Vysoky,
+            new Question { Id = "cil-uzivatele", Section = "Cíl a uživatelé", Impact = Impact.High,
                 Text = "Kdo bude aplikaci používat? (role, zkušenost s počítačem, kolik lidí)",
-                Napoveda = "Jiné UX pro recepční, jiné pro vývojáře. Ovlivňuje složitost rozhraní.",
-                VychoziPredpoklad = "Jediný uživatel – autor nápadu.",
-                Texty = new Dictionary<TypProjektu, string>
+                HelpText = "Jiné UX pro recepční, jiné pro vývojáře. Ovlivňuje složitost rozhraní.",
+                DefaultAssumption = "Jediný uživatel – autor nápadu.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Pro jaké hráče je hra určena? (věk, občasný hráč, hardcore, lokální multiplayer?)" },
-                    { TypProjektu.Evidence, "Kdo bude data spravovat a kdo je bude jen prohlížet? (role, oprávnění)" },
-                    { TypProjektu.Nastroj, "Kdo je typickým uživatelem nástroje a jaké má technické znalosti?" }
+                    { ProjectType.Game, "Pro jaké hráče je hra určena? (věk, občasný hráč, hardcore, lokální multiplayer?)" },
+                    { ProjectType.Registry, "Kdo bude data spravovat a kdo je bude jen prohlížet? (role, oprávnění)" },
+                    { ProjectType.Tool, "Kdo je typickým uživatelem nástroje a jaké má technické znalosti?" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Ovlivňuje obtížnost, ovládání a přítomnost hry pro více hráčů." },
-                    { TypProjektu.Evidence, "Určuje, zda potřebujeme různé uživatelské účty a úroveň přístupu." },
-                    { TypProjektu.Nastroj, "Určuje, zda stačí příkazová řádka (CLI) nebo je nutné jednoduché klikací rozhraní (GUI)." }
+                    { ProjectType.Game, "Ovlivňuje obtížnost, ovládání a přítomnost hry pro více hráčů." },
+                    { ProjectType.Registry, "Určuje, zda potřebujeme různé uživatelské účty a úroveň přístupu." },
+                    { ProjectType.Tool, "Nástroje často spouští vývojáři přes CLI, nebo uživatelé v jednoduchém GUI." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Jeden hráč na lokálním počítači, jednoduché ovládání." },
-                    { TypProjektu.Evidence, "Jediný správce s plným přístupem k zápisu i čtení." },
-                    { TypProjektu.Nastroj, "Technicky zdatný uživatel, stačí jednoduché a přímočaré rozhraní." }
+                    { ProjectType.Game, "Pro běžné občasné hráče všech věkových kategorií, jednoduché ovládání." },
+                    { ProjectType.Registry, "Administrátor vkládá a mění záznamy, běžný uživatel pouze čte." },
+                    { ProjectType.Tool, "Technicky zdatný uživatel, který rozumí spouštěnému úkolu." }
                 }
             },
 
-            new Otazka { Id = "tech-platforma", Sekce = "Technika", Dopad = Dopad.Vysoky,
-                Text = "Na čem má běžet první verze? (Windows program, web, mobil…)",
-                Napoveda = "Mění architekturu i pracnost – proto je to jedna z prvních otázek.",
-                VychoziPredpoklad = "Desktopová aplikace pro Windows.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "rozsah-funkce", Section = "Rozsah", Impact = Impact.High,
+                Text = "Jaké jsou 3 nejdůležitější funkce, bez kterých aplikace nemá smysl?",
+                HelpText = "Tzv. MVP (Minimum Viable Product). Zbytek věcí se odloží na později.",
+                DefaultAssumption = "MVP obsahuje základní zobrazení a editaci hlavního objektu.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Na čem se bude hra hrát? (Windows .exe, web, mobil, gamepad?)" },
-                    { TypProjektu.Evidence, "Na čem má evidence běžet? (web, lokální program pro Windows, intranet…)" },
-                    { TypProjektu.Nastroj, "Na jaké platformě se bude nástroj spouštět? (CLI/konzole, desktop, web...)" }
+                    { ProjectType.Game, "Jaké jsou hlavní herní mechaniky? (např. pohyb, střílení, sbírání bodů)" },
+                    { ProjectType.Registry, "Jaké 3 hlavní operace musíme se záznamy umět? (např. import, filtry, tisk)" },
+                    { ProjectType.Tool, "Jaké jsou klíčové kroky zpracování? (např. načtení vstupu, transformace, zápis)" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Určuje herní engine (Unity, Godot, MonoGame) a způsob ovládání." },
-                    { TypProjektu.Evidence, "Web umožňuje přístup odkudkoliv, desktop je jednodušší na vývoj a offline." },
-                    { TypProjektu.Nastroj, "CLI je ideální pro automatizaci a skripty, desktop pro interaktivní práci." }
+                    { ProjectType.Game, "Základní smyčka hry (gameplay loop), kterou hráč dělá 90 % času." },
+                    { ProjectType.Registry, "Například rychlé Fulltext vyhledávání, export do Excelu a editace polí." },
+                    { ProjectType.Tool, "Popiš sekvenci kroků, jak nástroj zpracuje vstup na požadovaný výstup." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Desktopová hra pro Windows, ovládání klávesnicí a myší." },
-                    { TypProjektu.Evidence, "Lokální desktopová aplikace pro Windows." },
-                    { TypProjektu.Nastroj, "Konzolová aplikace (CLI) nebo jednoduchý desktopový program pro Windows." }
+                    { ProjectType.Game, "Pohyb postavy, interakce s překážkami a počítadlo skóre." },
+                    { ProjectType.Registry, "Vytvoření záznamu, vyhledávání podle názvu a export do CSV." },
+                    { ProjectType.Tool, "Načtení konfiguračního souboru, provedení analýzy a výpis chyb." }
                 }
             },
 
-            new Otazka { Id = "tech-offline", Sekce = "Technika", Dopad = Dopad.Vysoky,
-                Text = "Musí fungovat bez internetu, nebo může počítat s připojením?",
-                Napoveda = "Offline režim zásadně ovlivňuje ukládání dat i synchronizaci.",
-                VychoziPredpoklad = "Plně offline, bez závislosti na připojení.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "rozsah-nongoals", Section = "Rozsah", Impact = Impact.Medium,
+                Text = "Co aplikace v první verzi rozhodně DĚLAT NEBUDE? (tzv. Non-Goals)",
+                HelpText = "Důležité pro vymezení hranic – např. žádná mobilní aplikace, žádný cloud, žádné role.",
+                DefaultAssumption = "První verze neřeší přihlašování uživatelů, synchronizaci ani design na míru.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Vyžaduje hra připojení k internetu? (multiplayer, online žebříčky?)" },
-                    { TypProjektu.Evidence, "Budou data uložena lokálně u uživatele, nebo na sdíleném serveru v síti?" },
-                    { TypProjektu.Nastroj, "Potřebuje nástroj pro svou práci internet, nebo běží plně lokálně?" }
+                    { ProjectType.Game, "Co ve hře v první verzi určitě nebude? (multiplayer, 3D grafika, žebříčky online...)" },
+                    { ProjectType.Registry, "Jaké funkce odložíme na druhou verzi? (historie změn, hromadné úpravy, API...)" },
+                    { ProjectType.Tool, "Co nástroj nebude řešit? (automatické spouštění, GUI rozhraní, složité formáty...)" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Offline hra je jednodušší. Online vyžaduje server a řešení síťové latence." },
-                    { TypProjektu.Evidence, "Lokální DB je offline a bezpečná; sdílená DB vyžaduje připojení a řešení konfliktů." },
-                    { TypProjektu.Nastroj, "Např. stahování z webu vs. lokální konverze souborů na disku." }
+                    { ProjectType.Game, "Udržujte rozsah při zemi. Zlaté pravidlo: dělejte nejdřív lokální singleplayer." },
+                    { ProjectType.Registry, "U evidencí se často odkládá pokročilý reporting a automatické notifikace." },
+                    { ProjectType.Tool, "CLI nástroje obvykle v první verzi neřeší grafické klikátko ani integraci do OS." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Plně offline singleplayer, bez online funkcí." },
-                    { TypProjektu.Evidence, "Lokální databáze uložená na disku počítače." },
-                    { TypProjektu.Nastroj, "Plně lokální běh bez nutnosti síťového připojení." }
+                    { ProjectType.Game, "Bez online multiplayeru, bez mikrotransakcí, pouze lokální uložení skóre." },
+                    { ProjectType.Registry, "Bez napojení na externí fakturační systémy, bez hromadných úprav dat." },
+                    { ProjectType.Tool, "Bez plánovače úloh (cronu) a bez webového API pro integraci." }
                 }
             },
 
-            new Otazka { Id = "data-obsah", Sekce = "Data", Dopad = Dopad.Vysoky,
-                Text = "Jaká data se budou ukládat? Budou mezi nimi osobní údaje?",
-                Napoveda = "Osobní údaje = právní dopad (GDPR) a vyšší nároky na zabezpečení.",
-                VychoziPredpoklad = "Jen neosobní provozní data; bez osobních údajů.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "ux-styl", Section = "UX", Impact = Impact.Medium,
+                Text = "Jaký vzhled a styl rozhraní preferuješ? (minimalistické, tmavý režim, retro...)",
+                HelpText = "Určuje designový systém a estetické nároky na aplikaci.",
+                DefaultAssumption = "Čistý, moderní vzhled s podporou tmavého režimu (dark mode).",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Jaká herní data se ukládají? (pozice, skóre, statistiky, nastavení)" },
-                    { TypProjektu.Evidence, "Jaké přesné údaje o položkách se budou ukládat? Budou tam osobní data?" },
-                    { TypProjektu.Nastroj, "Jaká data/soubory nástroj načítá, zpracovává a co si musí trvale pamatovat?" }
+                    { ProjectType.Game, "Jaký grafický styl a pohled kamera využívá? (2D z boku, retro pixel art, 3D...)" },
+                    { ProjectType.Registry, "Je důležitější hustota informací (tabulky), nebo vzdušný design (karty)?" },
+                    { ProjectType.Tool, "Preferuješ čistě textové CLI (příkazová řádka), nebo jednoduché GUI formuláře?" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Určuje strukturu ukládání herního stavu (save files)." },
-                    { TypProjektu.Evidence, "Definuje databázová pole (např. název, datum, cena, jméno klienta - GDPR)." },
-                    { TypProjektu.Nastroj, "Většina nástrojů si pamatuje jen konfiguraci/historii, samotná data neukládá." }
+                    { ProjectType.Game, "Estetika hry zásadně ovlivňuje náročnost na grafické assety." },
+                    { ProjectType.Registry, "Administrační systémy vyžadují spíše přehledné a husté tabulky pro rychlou práci." },
+                    { ProjectType.Tool, "CLI rozhraní je rychlejší na vývoj a oblíbené u programátorů." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Ukládání nejvyššího dosaženého skóre a lokálního nastavení hry." },
-                    { TypProjektu.Evidence, "Základní datová pole bez citlivých nebo osobních údajů." },
-                    { TypProjektu.Nastroj, "Pouze konfigurační soubor a historie posledních operací." }
+                    { ProjectType.Game, "Jednoduchá 2D grafika, pohled shora, čisté barvy." },
+                    { ProjectType.Registry, "Tabulkové zobrazení s fixním záhlavím, zaměření na čitelnost a kontrast." },
+                    { ProjectType.Tool, "Jednoduché okno se vstupními poli a jedním spouštěcím tlačítkem." }
                 }
             },
 
-            new Otazka { Id = "rozsah-nongoals", Sekce = "Rozsah", Dopad = Dopad.Vysoky,
-                Text = "Co v první verzi záměrně NEMÁ být? (non-goals)",
-                Napoveda = "Výslovné non-goals chrání projekt před nafukováním rozsahu.",
-                VychoziPredpoklad = "Non-goals zatím neurčeny – riziko rozšiřování rozsahu.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "tech-platforma", Section = "Technika", Impact = Impact.High,
+                Text = "Na jakých zařízeních a platformách má aplikace běžet? (web, Windows, mobil...)",
+                HelpText = "Rozhodující pro volbu technologií (C#, React, Swift...).",
+                DefaultAssumption = "Desktopová aplikace pro Windows 10/11.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Co ve hře v první verzi záměrně NEBUDE? (non-goals, např. editor levelů, zvuk)" },
-                    { TypProjektu.Evidence, "Jaké pokročilé funkce v první verzi NEBUDOU? (např. práva, tisk, historie)" },
-                    { TypProjektu.Nastroj, "Co v první verzi nástroj NEBUDE umět? (např. dávkové zpracování, GUI)" }
+                    { ProjectType.Game, "Kde se bude hra hrát? (v prohlížeči, na mobilu, na PC/Steam, konzole?)" },
+                    { ProjectType.Registry, "Jak budou uživatelé k evidenci přistupovat? (z vnitřní sítě, z internetu, z mobilu)" },
+                    { ProjectType.Tool, "Kde se bude nástroj spouštět? (lokálně na vývojářském PC, na serveru v Linuxu...)" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "U her je snadné sklouznout k vymýšlení dalších mechanik. Drž se jádra." },
-                    { TypProjektu.Evidence, "Evidence se často komplikují reporty a synchronizací. Definuj, co počká." },
-                    { TypProjektu.Nastroj, "Pomáhá omezit funkčnost na nejdůležitější hlavní úkol." }
+                    { ProjectType.Game, "Prohlížeč (HTML5/WASM) je nejsnadnější pro rychlé sdílení s hráči." },
+                    { ProjectType.Registry, "Webová aplikace v prohlížeči je dnes standardem pro většinu evidencí." },
+                    { ProjectType.Tool, "Nástroje v .NET nebo Pythonu lze snadno kompilovat pro Windows i Linux." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Zatím bez hudby, bez online žebříčků a bez editoru map." },
-                    { TypProjektu.Evidence, "Bez uživatelských rolí, bez automatických e-mailů a bez PDF reportů." },
-                    { TypProjektu.Nastroj, "Bez podpory hromadného zpracování a bez grafického rozhraní (pokud je CLI)." }
+                    { ProjectType.Game, "Webová hra běžící v moderním prohlížeči bez instalace." },
+                    { ProjectType.Registry, "Webová aplikace přístupná přes standardní prohlížeč z vnitřní sítě." },
+                    { ProjectType.Tool, "Lokální konzolová aplikace (CLI) pro Windows i Linux." }
                 }
             },
 
-            new Otazka { Id = "akceptace", Sekce = "Akceptace", Dopad = Dopad.Vysoky,
-                Text = "Podle čeho poznáš, že je hotovo? Napiš 2–3 ověřitelné podmínky.",
-                Napoveda = "Testovatelné podmínky určují hotový výsledek – bez nich nejde ověřit úspěch.",
-                VychoziPredpoklad = "Akceptační kritéria budou doplněna po první ukázce.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "tech-offline", Section = "Technika", Impact = Impact.High,
+                Text = "Musí aplikace fungovat plně offline, nebo se počítá se stálým internetem?",
+                HelpText = "Offline vyžaduje lokální databázi (SQLite), online využívá cloud API.",
+                DefaultAssumption = "Plně online aplikace vyžadující připojení k internetu.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Kdy je hra hratelná a hotová? (např. dokončení kola, zobrazení Game Over)" },
-                    { TypProjektu.Evidence, "Jaké scénáře manipulace s daty musí bezchybně fungovat? (přidat, najít, smazat)" },
-                    { TypProjektu.Nastroj, "Jaké konkrétní vstupy musí nástroj úspěšně zpracovat a co vyprodukovat?" }
+                    { ProjectType.Game, "Ukládá se stav hry a skóre lokálně na zařízení, nebo na cloudový server?" },
+                    { ProjectType.Registry, "Lze data upravovat bez připojení (offline synchronizace), nebo jen online?" },
+                    { ProjectType.Tool, "Bude nástroj volat nějaké externí API, nebo pracuje čistě s lokálními soubory?" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Definuj minimální hratelnou verzi (core gameplay loop)." },
-                    { TypProjektu.Evidence, "Základní operace (CRUD) – popiš úspěšný průchod." },
-                    { TypProjektu.Nastroj, "Popiš testovací scénář (např. 'vezme soubor X a vytvoří správný soubor Y')." }
+                    { ProjectType.Game, "Lokální ukládání (LocalStorage) je nejjednodušší, cloud umožňuje žebříčky." },
+                    { ProjectType.Registry, "Offline-first aplikace s pozdější synchronizací jsou technicky velmi náročné." },
+                    { ProjectType.Tool, "Pokud nástroj zpracovává citlivá data, offline provoz zvyšuje bezpečnost." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Hráč může hru spustit, ovládat postavu, dosáhnout cíle a vidět skóre." },
-                    { TypProjektu.Evidence, "Lze přidat nový záznam, vyhledat ho podle názvu a smazat." },
-                    { TypProjektu.Nastroj, "Nástroj správně zpracuje vzorový vstupní soubor a vypíše výsledek bez chyb." }
+                    { ProjectType.Game, "Lokální ukládání postupu na daném zařízení (IndexedDB / LocalStorage)." },
+                    { ProjectType.Registry, "Vyžaduje stálé připojení k internetu a centrální databázi." },
+                    { ProjectType.Tool, "Čistě lokální zpracování souborů bez jakéhokoliv síťového provozu." }
                 }
             },
 
-            new Otazka { Id = "ux-obrazovky", Sekce = "UX", Dopad = Dopad.Stredni,
-                Text = "Jaké hlavní obrazovky nebo kroky uživatel projde?",
-                Napoveda = "Stačí hrubý tah: kde uživatel začne, co udělá, kde skončí.",
-                VychoziPredpoklad = "Jedna hlavní obrazovka; detaily vzejdou z první verze.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "data-obsah", Section = "Data", Impact = Impact.High,
+                Text = "Jaká data budeme ukládat a jak dlouho je potřebujeme uchovat?",
+                HelpText = "Určuje nároky na datové úložiště, databáze a bezpečnost dat.",
+                DefaultAssumption = "Data se ukládají trvale do lokální databáze (např. SQLite).",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Jaké stavy a obrazovky hra obsahuje? (Menu, Hrací plocha, Pause, Konec)" },
-                    { TypProjektu.Evidence, "Jaké formuláře a pohledy uživatel uvidí? (tabulka, karta záznamu, nastavení)" },
-                    { TypProjektu.Nastroj, "Jak vypadá interakce s nástrojem? (parametry v konzoli, jedno okno s tlačítkem)" }
+                    { ProjectType.Game, "Ukládá se rozehraná pozice (save game), nastavení a nejvyšší skóre?" },
+                    { ProjectType.Registry, "Jaké konkrétní informace o objektech ukládáme a jak velká data to budou?" },
+                    { ProjectType.Tool, "Ukládá nástroj nějakou historii zpracování, nebo funguje bezstavově?" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Určuje strukturu přepínání herních scén." },
-                    { TypProjektu.Evidence, "Navrhni rozvržení prvků pro pohodlnou práci s daty." },
-                    { TypProjektu.Nastroj, "Popiš, jak uživatel nástroj spouští a jak se dozví výsledek." }
+                    { ProjectType.Game, "Bezstavové hry (arkády) ukládají jen skóre, RPG vyžadují robustní serializaci." },
+                    { ProjectType.Registry, "Evidenční karty obsahují texty, čísla, data založení a případně přílohy." },
+                    { ProjectType.Tool, "Bezstavový nástroj (input->output) je řádově jednodušší a bezpečnější." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Úvodní menu, herní obrazovka a obrazovka s výsledky." },
-                    { TypProjektu.Evidence, "Hlavní okno s tabulkou záznamů a dialogové okno pro nový záznam." },
-                    { TypProjektu.Nastroj, "Jednoduché okno s výběrem souboru a tlačítkem Spustit." }
+                    { ProjectType.Game, "Ukládá se pouze tabulka s 10 nejlepšími výsledky (jméno a skóre)." },
+                    { ProjectType.Registry, "Ukládají se strukturovaná textová a číselná data s historií změn." },
+                    { ProjectType.Tool, "Bezstavový nástroj – nastavení se načítá z parametrů příkazové řádky." }
                 }
             },
 
-            new Otazka { Id = "data-export", Sekce = "Data", Dopad = Dopad.Stredni,
-                Text = "Potřebuješ export nebo import dat? V jakém formátu?",
-                Napoveda = "Export (CSV, PDF…) bývá levný teď, drahý dodatečně.",
-                VychoziPredpoklad = "Bez exportu a importu v první verzi.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "data-export", Section = "Data", Impact = Impact.Medium,
+                Text = "Vyžaduješ export dat pro jiné systémy? (např. do Excelu, CSV, PDF)",
+                HelpText = "Klíčové pro reporty a přenositelnost dat. Často se na to zapomíná.",
+                DefaultAssumption = "Není vyžadován žádný automatický export dat do externích formátů.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Bude možné skóre nebo pozice sdílet/exportovat? (snímky obrazovky, export skóre)" },
-                    { TypProjektu.Evidence, "Je vyžadován export tabulky nebo import stávajících dat? (Excel, CSV, JSON)" },
-                    { TypProjektu.Nastroj, "V jakém formátu nástroj odevzdává svůj výsledek? (nový soubor, konzolový výpis...)" }
+                    { ProjectType.Game, "Bude možné skóre nebo replay sdílet na sociální sítě či exportovat obrázek?" },
+                    { ProjectType.Registry, "Potřebují manažeři export tabulek do Excelu (XLSX) nebo PDF pro tisk?" },
+                    { ProjectType.Tool, "V jakém formátu nástroj vrací výsledky? (JSON na konzoli, HTML report, log...)" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "U her většinou export netřeba, případně jen formou uložení do souboru." },
-                    { TypProjektu.Evidence, "Užitečné pro migraci ze starých tabulek nebo posílání reportů." },
-                    { TypProjektu.Nastroj, "Popiš výstupní formát (TXT, CSV, přepsání původního souboru...)." }
+                    { ProjectType.Game, "Generování screenshotu s výsledkem hry je skvělý marketingový nástroj." },
+                    { ProjectType.Registry, "Export do CSV/XLSX je téměř vždy nutností pro další analýzu dat." },
+                    { ProjectType.Tool, "Strojově čitelný výstup (JSON/XML) umožňuje napojit nástroj do CI/CD pipeline." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Bez exportu herních dat." },
-                    { TypProjektu.Evidence, "Možnost exportu zobrazené tabulky do CSV souboru." },
-                    { TypProjektu.Nastroj, "Uložení výsledného zpracovaného souboru ve stejném formátu." }
+                    { ProjectType.Game, "Sdílení výsledku formou vygenerovaného obrázku se statistikou." },
+                    { ProjectType.Registry, "Možnost exportovat aktuálně vyfiltrovanou tabulku do CSV (pro Excel)." },
+                    { ProjectType.Tool, "Nástroj zapisuje výsledky do standardního textového logu a JSON souboru." }
                 }
             },
 
-            new Otazka { Id = "rizika", Sekce = "Rizika", Dopad = Dopad.Stredni,
-                Text = "Je něco nejasného nebo rizikového, co je potřeba ověřit?",
-                Napoveda = "Nejasnosti pojmenované předem šetří opravy později.",
-                VychoziPredpoklad = "Rizika zatím nezmapována.",
-                Texty = new Dictionary<TypProjektu, string>
+            new Question { Id = "rizika-reseni", Section = "Rizika", Impact = Impact.Medium,
+                Text = "Co je největší riziko projektu a jak ho vyřešíme v první verzi?",
+                HelpText = "Např. výpadek internetu, ztráta dat, pomalé reakce, složité ovládání.",
+                DefaultAssumption = "Největším rizikem je ztráta dat; vyřešíme ji automatickým lokálním ukládáním.",
+                Texts = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Jaká jsou herní rizika? (příliš těžká hratelnost, výkon vykreslování, fyzika)" },
-                    { TypProjektu.Evidence, "Co může ohrozit integritu dat nebo stabilitu? (výpadek proudu, kolize klíčů)" },
-                    { TypProjektu.Nastroj, "Na čem může nástroj selhat? (nečekaný formát vstupu, velké soubory)" }
+                    { ProjectType.Game, "Co by mohlo hráče nejvíc otrávit? (špatné ovládání, ztráta savu, stereotyp...)" },
+                    { ProjectType.Registry, "Co se stane, když systém vypadne? (dostupnost, zálohování, obnova dat)" },
+                    { ProjectType.Tool, "Co když nástroj dostane neplatný nebo příliš velký vstup? (chybové stavy)" }
                 },
-                Napovedy = new Dictionary<TypProjektu, string>
+                Helps = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Pomáhá zaměřit se na prototypování zábavnosti (fun factor)." },
-                    { TypProjektu.Evidence, "Zaměř se na bezpečnost dat a konkurentní přístup." },
-                    { TypProjektu.Nastroj, "Určuje, jak robustní musí být parsování chyb a ošetření výjimek." }
+                    { ProjectType.Game, "Špatné ovládání na mobilu spolehlivě zabije i skvělou hru." },
+                    { ProjectType.Registry, "U firemních evidencí je klíčová rychlost obnovy ze zálohy v případě havárie." },
+                    { ProjectType.Tool, "Nástroj by měl vždy provést validaci vstupu a vypsat srozumitelnou chybu." }
                 },
-                Predpoklady = new Dictionary<TypProjektu, string>
+                Assumptions = new Dictionary<ProjectType, string>
                 {
-                    { TypProjektu.Hra, "Riziko, že herní mechanika nebude zábavná; vyžaduje včasné herní testy." },
-                    { TypProjektu.Evidence, "Riziko ztráty dat při neočekávaném vypnutí; nutné bezpečné ukládání." },
-                    { TypProjektu.Nastroj, "Riziko chybného formátu vstupních dat; nutné ošetřit chybová hlášení." }
+                    { ProjectType.Game, "Ztráta rozehrané hry; vyřešíme automatickým ukládáním při každé změně scény." },
+                    { ProjectType.Registry, "Ztráta dat; vyřešíme denním automatickým zálohováním databáze na cloud." },
+                    { ProjectType.Tool, "Pád aplikace při chybě ve vstupu; vyřešíme důsledným ošetřením výjimek a validací." }
                 }
             },
+
+            new Question { Id = "akceptace", Section = "Akceptace", Impact = Impact.Medium,
+                Text = "Jak poznáme, že je aplikace hotová a funguje správně? (akceptační kritéria)",
+                HelpText = "Definuje úspěšné dokončení – např. 'projde scénář nákupu', 'načte 1000 položek pod 2s'.",
+                DefaultAssumption = "Projekt je hotový, pokud splňuje všechny body specifikace a projde ručním testem.",
+                Texts = new Dictionary<ProjectType, string>
+                {
+                    { ProjectType.Game, "Kdy je hra připravená k vydání? (projití celého levelu bez chyb, stabilní FPS)" },
+                    { ProjectType.Registry, "Jaké konkrétní testy musí systém splnit před nasazením do ostrého provozu?" },
+                    { ProjectType.Tool, "Jak ověříme správnost výstupu? (referenční vstupy a porovnání s očekávaným výsledkem)" }
+                },
+                Helps = new Dictionary<ProjectType, string>
+                {
+                    { ProjectType.Game, "Obvykle se testuje průchod hry od startu do konce a měří se plynulost (např. 60 FPS)." },
+                    { ProjectType.Registry, "Například úspěšné vložení, vyhledání, úprava a smazání testovacího záznamu." },
+                    { ProjectType.Tool, "Automatické testy porovnávající vygenerovaný soubor s referenčním vzorem." }
+                },
+                Assumptions = new Dictionary<ProjectType, string>
+                {
+                    { ProjectType.Game, "Hráč může projít úvodní tutoriál a první 3 herní úrovně bez pádu aplikace." },
+                    { ProjectType.Registry, "Projmutí kompletního scénáře: registrace uživatele, vytvoření záznamu, export." },
+                    { ProjectType.Tool, "Nástroj správně zpracuje všech 5 přiložených testovacích scénářů." }
+                }
+            }
         };
 
-        public static Otazka Podle(string id)
-        {
-            foreach (var o in Vse) if (o.Id == id) return o;
-            return null;
-        }
+        public static Question Under(ProjectSpecification p, string id)
+            => All.FirstOrDefault(o => o.Id == id);
     }
 
-    public static class SpecSluzba
+    public static class SpecificationService
     {
-        public static IEnumerable<Otazka> VratOtazkyProjektu(SpecProjekt p)
+        // Pevné pořadí sekcí pro dokumentaci a formuláře (kap. 7)
+        public static readonly IReadOnlyList<string> SectionOrder = new List<string>
         {
-            if (p != null && p.Otazky != null && p.Otazky.Count > 0)
-            {
-                return p.Otazky;
-            }
-            return Otazky.Vse;
-        }
-
-        public static Otazka Podle(SpecProjekt p, string id)
-        {
-            foreach (var o in VratOtazkyProjektu(p)) if (o.Id == id) return o;
-            return null;
-        }
-
-        public static readonly string[] PoradiSekci = new[]
-        {
-            "Cíl a uživatelé", "Rozsah", "UX", "Data", "Technika", "Akceptace", "Rizika"
+            "Cíl a uživatelé",
+            "Rozsah",
+            "UX",
+            "Data",
+            "Technika",
+            "Akceptace",
+            "Rizika"
         };
 
-        public static IEnumerable<string> VratVsechnySekce(SpecProjekt p)
+        public static List<string> GetAllSections(ProjectSpecification p)
         {
-            var sekceProjektu = VratOtazkyProjektu(p).Select(o => o.Sekce).Distinct();
-            var list = new List<string>(PoradiSekci);
-            foreach (var s in sekceProjektu)
+            var projectSections = GetProjectQuestions(p).Select(o => o.Section).Distinct();
+            var list = new List<string>(SectionOrder);
+            foreach (var s in projectSections)
             {
                 if (!string.IsNullOrWhiteSpace(s) && !list.Contains(s))
                 {
@@ -601,201 +606,194 @@ namespace CodePlanner.Core
             Converters = { new JsonStringEnumConverter() }
         };
 
-        // ---------- změny stavu ----------
+        // ---------- state changes ----------
 
-        public static string VratNazevTypu(TypProjektu typ) => VratNazevTypu(typ.ToString());
+        public static string GetProjectTypeName(ProjectType typ) => GetProjectTypeName(typ.ToString());
 
-        public static string VratNazevTypu(string typKlic)
+        public static string GetProjectTypeName(string typeKey)
         {
-            if (Enum.TryParse<TypProjektu>(typKlic, true, out var enumTyp))
+            if (Enum.TryParse<ProjectType>(typeKey, true, out var enumTyp))
             {
                 return enumTyp switch
                 {
-                    TypProjektu.Hra => "Hra (Game)",
-                    TypProjektu.Evidence => "Evidence / Registr",
-                    TypProjektu.Nastroj => "Nástroj / Utilita",
+                    ProjectType.Game => "Hra (Game)",
+                    ProjectType.Registry => "Evidence / Registr",
+                    ProjectType.Tool => "Nástroj / Utilita",
                     _ => "Obecná aplikace"
                 };
             }
 
-            var sablona = SablonaSluzba.CustomSablony.FirstOrDefault(s => string.Equals(s.Klic, typKlic, StringComparison.OrdinalIgnoreCase));
-            if (sablona != null) return sablona.Nazev;
+            var template = TemplateService.CustomTemplates.FirstOrDefault(s => string.Equals(s.Key, typeKey, StringComparison.OrdinalIgnoreCase));
+            if (template != null) return template.Name;
 
-            return typKlic;
+            return typeKey;
         }
 
-        public static void ZmenTypProjektu(SpecProjekt p, TypProjektu novyTyp) => ZmenTypProjektu(p, novyTyp.ToString());
+        public static void ChangeProjectType(ProjectSpecification p, ProjectType newType) => ChangeProjectType(p, newType.ToString());
 
-        public static void ZmenTypProjektu(SpecProjekt p, string novyTypKlic)
+        public static void ChangeProjectType(ProjectSpecification p, string newTypeKey)
         {
-            if (p.TypProjektuKlic == novyTypKlic) return;
-            var staryTypKlic = p.TypProjektuKlic;
-            p.TypProjektuKlic = novyTypKlic;
+            if (p.ProjectTypeKey == newTypeKey) return;
+            var oldTypeKey = p.ProjectTypeKey;
+            p.ProjectTypeKey = newTypeKey;
 
-            if (Enum.TryParse<TypProjektu>(novyTypKlic, true, out var enumTyp))
+            if (Enum.TryParse<ProjectType>(newTypeKey, true, out var enumTyp))
             {
-                p.TypProjektu = enumTyp;
+                p.ProjectType = enumTyp;
             }
             else
             {
-                p.TypProjektu = TypProjektu.Obecna;
+                p.ProjectType = ProjectType.General;
             }
 
-            // Aktualizujeme všechny automatické předpoklady
-            foreach (var ot in VratOtazkyProjektu(p))
+            // Update all automatic assumptions
+            foreach (var ot in GetProjectQuestions(p))
             {
-                var odp = OdpovedNa(p, ot.Id);
-                if (odp != null && odp.JePredpoklad)
+                var odp = GetAnswerFor(p, ot.Id);
+                if (odp != null && odp.IsAssumption)
                 {
-                    odp.Text = ot.GetVychoziPredpoklad(novyTypKlic);
-                    odp.Cas = DateTime.Now;
+                    odp.Text = ot.GetDefaultAssumption(newTypeKey);
+                    odp.Timestamp = DateTime.Now;
                 }
             }
 
-            Zmena(p, "Typ projektu", $"Změna typu projektu z {VratNazevTypu(staryTypKlic)} na {VratNazevTypu(novyTypKlic)}.");
+            LogChange(p, "Typ projektu", $"Změna typu projektu z {GetProjectTypeName(oldTypeKey)} na {GetProjectTypeName(newTypeKey)}.");
         }
 
-        public static void NastavNapad(SpecProjekt p, string napad)
+        public static void SetIdea(ProjectSpecification p, string idea)
         {
-            if ((p.Napad ?? "") == (napad ?? "")) return;
-            p.Napad = napad ?? "";
-            Zmena(p, "Nápad", "Upraven text původního nápadu.");
+            if ((p.Idea ?? "") == (idea ?? "")) return;
+            p.Idea = idea ?? "";
+            LogChange(p, "Nápad", "Upraven text původního nápadu.");
         }
 
-        public static void Odpovez(SpecProjekt p, string otazkaId, string text)
+        public static void AnswerQuestion(ProjectSpecification p, string questionId, string text)
         {
-            var ot = Podle(p, otazkaId);
+            var ot = GetQuestionById(p, questionId);
             if (ot == null || string.IsNullOrWhiteSpace(text)) return;
 
-            var stara = p.Odpovedi.FirstOrDefault(o => o.OtazkaId == otazkaId);
-            if (stara != null) p.Odpovedi.Remove(stara);
+            var stara = p.Answers.FirstOrDefault(o => o.QuestionId == questionId);
+            if (stara != null) p.Answers.Remove(stara);
 
             string novyText = text.Trim();
-            p.Odpovedi.Add(new Odpoved { OtazkaId = otazkaId, Text = novyText, JePredpoklad = false, Cas = DateTime.Now });
+            p.Answers.Add(new Answer { QuestionId = questionId, Text = novyText, IsAssumption = false, Timestamp = DateTime.Now });
 
             string detail;
             if (stara != null && stara.Text != novyText)
             {
-                // Přepis existující odpovědi jiným textem – do logu zapíšeme obě hodnoty.
-                detail = ot.GetText(p.TypProjektuKlic) + " → bylo: '" + Zkrat(stara.Text, 120) + "' → je: '" + Zkrat(novyText, 120) + "'";
+                detail = ot.GetText(p.ProjectTypeKey) + " → bylo: '" + ShortenText(stara.Text, 120) + "' → je: '" + ShortenText(novyText, 120) + "'";
             }
             else
             {
-                detail = ot.GetText(p.TypProjektuKlic) + " → " + Zkrat(novyText, 120);
+                detail = ot.GetText(p.ProjectTypeKey) + " → " + ShortenText(novyText, 120);
             }
-            Zmena(p, stara == null ? "Odpověď" : "Změna odpovědi", detail);
+            LogChange(p, stara == null ? "Odpověď" : "Změna odpovědi", detail);
         }
 
-        public static void PouzijPredpoklad(SpecProjekt p, string otazkaId)
+        public static void UseAssumption(ProjectSpecification p, string questionId)
         {
-            var ot = Podle(p, otazkaId);
+            var ot = GetQuestionById(p, questionId);
             if (ot == null) return;
 
-            var stara = p.Odpovedi.FirstOrDefault(o => o.OtazkaId == otazkaId);
-            if (stara != null) p.Odpovedi.Remove(stara);
+            var stara = p.Answers.FirstOrDefault(o => o.QuestionId == questionId);
+            if (stara != null) p.Answers.Remove(stara);
 
-            p.Odpovedi.Add(new Odpoved { OtazkaId = otazkaId, Text = ot.GetVychoziPredpoklad(p.TypProjektuKlic), JePredpoklad = true, Cas = DateTime.Now });
-            Zmena(p, "Předpoklad", ot.GetText(p.TypProjektuKlic) + " → [PŘEDPOKLAD] " + ot.GetVychoziPredpoklad(p.TypProjektuKlic));
+            p.Answers.Add(new Answer { QuestionId = questionId, Text = ot.GetDefaultAssumption(p.ProjectTypeKey), IsAssumption = true, Timestamp = DateTime.Now });
+            LogChange(p, "Předpoklad", ot.GetText(p.ProjectTypeKey) + " → [PŘEDPOKLAD] " + ot.GetDefaultAssumption(p.ProjectTypeKey));
         }
 
-        public static void Zmena(SpecProjekt p, string akce, string detail)
+        public static void LogChange(ProjectSpecification p, string action, string detail)
         {
-            p.Verze++;
-            p.Upraveno = DateTime.Now;
-            p.Log.Add(new Rozhodnuti { Cas = DateTime.Now, Akce = akce, Detail = detail });
+            p.Version++;
+            p.UpdatedAt = DateTime.Now;
+            p.ChangeLog.Add(new DecisionLogEntry { Timestamp = DateTime.Now, Action = action, Detail = detail });
         }
 
-        // ---------- dotazy na stav ----------
+        // ---------- status queries ----------
 
-        public static Odpoved OdpovedNa(SpecProjekt p, string otazkaId)
-            => p.Odpovedi.FirstOrDefault(o => o.OtazkaId == otazkaId);
+        public static Answer GetAnswerFor(ProjectSpecification p, string questionId)
+            => p.Answers.FirstOrDefault(o => o.QuestionId == questionId);
 
-        public static Otazka DalsiNezodpovezena(SpecProjekt p)
-            => VratOtazkyProjektu(p).FirstOrDefault(ot => OdpovedNa(p, ot.Id) == null);
+        public static Question GetNextUnansweredQuestion(ProjectSpecification p)
+            => GetProjectQuestions(p).FirstOrDefault(ot => GetAnswerFor(p, ot.Id) == null);
 
-        public static int PocetZodpovezenych(SpecProjekt p)
-            => VratOtazkyProjektu(p).Count(ot => { var o = OdpovedNa(p, ot.Id); return o != null && !o.JePredpoklad; });
+        public static int GetAnsweredCount(ProjectSpecification p)
+            => GetProjectQuestions(p).Count(ot => { var o = GetAnswerFor(p, ot.Id); return o != null && !o.IsAssumption; });
 
-        public static int PocetPredpokladu(SpecProjekt p)
-            => VratOtazkyProjektu(p).Count(ot => { var o = OdpovedNa(p, ot.Id); return o != null && o.JePredpoklad; });
+        public static int GetAssumptionsCount(ProjectSpecification p)
+            => GetProjectQuestions(p).Count(ot => { var o = GetAnswerFor(p, ot.Id); return o != null && o.IsAssumption; });
 
-        public static List<Otazka> OtevreneOtazky(SpecProjekt p)
-            => VratOtazkyProjektu(p).Where(ot => OdpovedNa(p, ot.Id) == null).ToList();
+        public static List<Question> GetOpenQuestions(ProjectSpecification p)
+            => GetProjectQuestions(p).Where(ot => GetAnswerFor(p, ot.Id) == null).ToList();
 
-        /// <summary>Metriky jsou spočítané, ale specifikace se od jejich výpočtu změnila.</summary>
-        public static bool MetrikyJsouZastarale(SpecProjekt p)
-            => p != null && p.Metriky != null && p.Metriky.CasVypoctu != default && p.Metriky.CasVypoctu < p.Upraveno;
+        public static bool AreMetricsOutdated(ProjectSpecification p)
+            => p != null && p.Metrics != null && p.Metrics.CalculationTimestamp != default && p.Metrics.CalculationTimestamp < p.UpdatedAt;
 
-        /// <summary>User stories jsou vygenerované, ale specifikace se od jejich generování změnila.</summary>
-        public static bool StoriesJsouZastarale(SpecProjekt p)
+        public static bool AreStoriesOutdated(ProjectSpecification p)
             => p != null && p.UserStories != null && p.UserStories.Count > 0
-               && p.CasGenerovaniStories.HasValue && p.CasGenerovaniStories.Value < p.Upraveno;
+               && p.StoriesGenerationTimestamp.HasValue && p.StoriesGenerationTimestamp.Value < p.UpdatedAt;
 
-        /// <summary>Text poznámky o zastaralém odhadu (metrikách) – sdílený mezi exporty.</summary>
-        public const string PoznamkaZastaraleMetriky = "⚠ Odhad byl vygenerován pro starší verzi specifikace – doporučujeme přepočítat.";
-
-        /// <summary>Text poznámky o zastaralých user stories – sdílený mezi exporty.</summary>
-        public const string PoznamkaZastaraleStories = "⚠ User stories byly vygenerovány pro starší verzi specifikace – doporučujeme je vygenerovat znovu.";
+        public const string OutdatedMetricsNote = "⚠ Odhad byl vygenerován pro starší verzi specifikace – doporučujeme přepočítat.";
+        public const string OutdatedStoriesNote = "⚠ User stories byly vygenerovány pro starší verzi specifikace – doporučujeme je vygenerovat znovu.";
 
         // ---------- rendering ----------
 
-        private static string Datum(DateTime d) => d.ToString("d'.' M'.' yyyy H':'mm");
+        private static string FormatDate(DateTime d) => d.ToString("d'.' M'.' yyyy H':'mm");
 
-        private static string Zkrat(string s, int max)
+        private static string ShortenText(string s, int max)
         {
             s = (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
             return s.Length <= max ? s : s.Substring(0, max - 1) + "…";
         }
 
-        /// <summary>Čitelný dokument pro člověka (kap. 7: „Jedna kanonická struktura se renderuje dvěma způsoby…“).</summary>
-        public static string RenderMarkdown(SpecProjekt p)
+        public static string RenderMarkdown(ProjectSpecification p)
         {
             var sb = new StringBuilder();
-            string nazev = string.IsNullOrWhiteSpace(p.Nazev) ? "(nepojmenovaný projekt)" : p.Nazev.Trim();
+            string name = string.IsNullOrWhiteSpace(p.Name) ? "(nepojmenovaný projekt)" : p.Name.Trim();
 
-            sb.AppendLine("# Specifikace: " + nazev);
-            sb.AppendLine("*Typ projektu: " + VratNazevTypu(p.TypProjektuKlic) + "*");
-            sb.AppendLine("*Verze specifikace " + p.Verze + " · aktualizováno " + Datum(p.Upraveno) + "*");
+            sb.AppendLine("# Specifikace: " + name);
+            sb.AppendLine("*Typ projektu: " + GetProjectTypeName(p.ProjectTypeKey) + "*");
+            sb.AppendLine("*Verze specifikace " + p.Version + " · aktualizováno " + FormatDate(p.UpdatedAt) + "*");
             sb.AppendLine("*Vytvořeno nástrojem CodePlanner*");
             sb.AppendLine();
 
             sb.AppendLine("## Původní nápad");
-            if (string.IsNullOrWhiteSpace(p.Napad))
+            if (string.IsNullOrWhiteSpace(p.Idea))
                 sb.AppendLine("> (zatím nezadán – napiš nebo nadiktuj svůj nápad)");
             else
-                foreach (var radek in p.Napad.Trim().Split('\n'))
+                foreach (var radek in p.Idea.Trim().Split('\n'))
                     sb.AppendLine("> " + radek.TrimEnd());
             sb.AppendLine();
 
-            if (!string.IsNullOrWhiteSpace(p.ReferencniText))
+            if (!string.IsNullOrWhiteSpace(p.ReferenceText))
             {
-                sb.AppendLine("## Referenční podklady (" + (p.ReferencniNazev ?? "příloha") + ")");
+                sb.AppendLine("## Referenční podklady (" + (p.ReferenceName ?? "příloha") + ")");
                 sb.AppendLine("```text");
-                sb.AppendLine(p.ReferencniText.Trim());
+                sb.AppendLine(p.ReferenceText.Trim());
                 sb.AppendLine("```");
                 sb.AppendLine();
             }
 
-            if (!string.IsNullOrWhiteSpace(p.MockupNazev))
+            if (!string.IsNullOrWhiteSpace(p.MockupName))
             {
                 sb.AppendLine("## Vizuální nákres rozhraní (Mockup)");
-                sb.AppendLine("- Přiložen vizuální návrh: **" + p.MockupNazev + "** (obrázek odesílán jako vizuální kontext do Gemini)");
+                sb.AppendLine("- Přiložen vizuální návrh: **" + p.MockupName + "** (obrázek odesílán jako vizuální kontext do Gemini)");
                 sb.AppendLine();
             }
 
-            foreach (var sekce in VratVsechnySekce(p))
+            foreach (var sekce in GetAllSections(p))
             {
                 sb.AppendLine("## " + sekce);
-                var otazkySekce = VratOtazkyProjektu(p).Where(o => o.Sekce == sekce).ToList();
+                var otazkySekce = GetProjectQuestions(p).Where(o => o.Section == sekce).ToList();
                 bool neco = false;
 
                 foreach (var ot in otazkySekce)
                 {
-                    var odp = OdpovedNa(p, ot.Id);
+                    var odp = GetAnswerFor(p, ot.Id);
                     if (odp == null) continue;
                     neco = true;
-                    string znacka = odp.JePredpoklad ? " **[PŘEDPOKLAD]**" : "";
-                    sb.AppendLine("- **" + ot.GetText(p.TypProjektuKlic) + "**" + znacka);
+                    string znacka = odp.IsAssumption ? " **[PŘEDPOKLAD]**" : "";
+                    sb.AppendLine("- **" + ot.GetText(p.ProjectTypeKey) + "**" + znacka);
                     foreach (var radek in odp.Text.Trim().Split('\n'))
                         sb.AppendLine("  " + radek.TrimEnd());
                 }
@@ -804,100 +802,98 @@ namespace CodePlanner.Core
                 sb.AppendLine();
             }
 
-            var otevrene = OtevreneOtazky(p);
+            var otevrene = GetOpenQuestions(p);
             sb.AppendLine("## Otevřené otázky");
             if (otevrene.Count == 0)
                 sb.AppendLine("- *(žádné – všechny otázky jsou vyřešené)*");
             else
                 foreach (var ot in otevrene)
-                    sb.AppendLine("- [" + (ot.Dopad == Dopad.Vysoky ? "vysoký dopad" : "střední dopad") + "] " + ot.GetText(p.TypProjektuKlic));
+                    sb.AppendLine("- [" + (ot.Impact == Impact.High ? "vysoký dopad" : "střední dopad") + "] " + ot.GetText(p.ProjectTypeKey));
             sb.AppendLine();
 
-            var nalezy = KonzistencniKontrola.Zkontroluj(p);
+            var nalezy = ConsistencyChecker.Check(p);
             if (nalezy.Count > 0)
             {
                 sb.AppendLine("## Kontrola konzistence");
                 foreach (var n in nalezy)
-                    sb.AppendLine("- " + (n.Zavaznost == Zavaznost.Rozpor ? "❗ **ROZPOR: " : "⚠️ **Varování: ") + n.Titulek + "** – " + n.Detail);
+                    sb.AppendLine("- " + (n.Severity == Severity.Conflict ? "❗ **ROZPOR: " : "⚠️ **Varování: ") + n.Title + "** – " + n.Detail);
                 sb.AppendLine();
             }
 
             sb.AppendLine("## Souhrn stavu");
-            sb.AppendLine("- Zodpovězeno: " + PocetZodpovezenych(p) + " / " + VratOtazkyProjektu(p).Count());
-            sb.AppendLine("- Označené předpoklady: " + PocetPredpokladu(p));
+            sb.AppendLine("- Zodpovězeno: " + GetAnsweredCount(p) + " / " + GetProjectQuestions(p).Count());
+            sb.AppendLine("- Označené předpoklady: " + GetAssumptionsCount(p));
             sb.AppendLine("- Otevřené otázky: " + otevrene.Count);
-            // Markdown nemá vlastní sekci metrik/stories – poznámky o zastaralosti patří do souhrnu stavu.
-            if (MetrikyJsouZastarale(p))
-                sb.AppendLine("- " + PoznamkaZastaraleMetriky);
-            if (StoriesJsouZastarale(p))
-                sb.AppendLine("- " + PoznamkaZastaraleStories);
+            if (AreMetricsOutdated(p))
+                sb.AppendLine("- " + OutdatedMetricsNote);
+            if (AreStoriesOutdated(p))
+                sb.AppendLine("- " + OutdatedStoriesNote);
             sb.AppendLine();
 
             sb.AppendLine("## Log rozhodnutí");
-            if (p.Log.Count == 0)
+            if (p.ChangeLog.Count == 0)
                 sb.AppendLine("- *(zatím žádná rozhodnutí)*");
             else
-                foreach (var r in p.Log)
-                    sb.AppendLine("- " + Datum(r.Cas) + " · **" + r.Akce + "** · " + r.Detail);
+                foreach (var r in p.ChangeLog)
+                    sb.AppendLine("- " + FormatDate(r.Timestamp) + " · **" + r.Action + "** · " + r.Detail);
 
             return sb.ToString();
         }
 
-        /// <summary>Stabilní strojová struktura pro orchestrátor/agenta (kap. 7).</summary>
-        public static string RenderJson(SpecProjekt p)
+        public static string RenderJson(ProjectSpecification p)
         {
-            var sekce = new List<object>();
-            foreach (var nazevSekce in VratVsechnySekce(p))
+            var sections = new List<object>();
+            foreach (var sectionName in GetAllSections(p))
             {
-                var polozky = new List<object>();
-                foreach (var ot in VratOtazkyProjektu(p).Where(o => o.Sekce == nazevSekce))
+                var items = new List<object>();
+                foreach (var ot in GetProjectQuestions(p).Where(o => o.Section == sectionName))
                 {
-                    var odp = OdpovedNa(p, ot.Id);
+                    var odp = GetAnswerFor(p, ot.Id);
                     if (odp == null) continue;
-                    polozky.Add(new { id = ot.Id, otazka = ot.GetText(p.TypProjektuKlic), odpoved = odp.Text, predpoklad = odp.JePredpoklad });
+                    items.Add(new { id = ot.Id, question = ot.GetText(p.ProjectTypeKey), answer = odp.Text, assumption = odp.IsAssumption });
                 }
-                sekce.Add(new { nazev = nazevSekce, polozky });
+                sections.Add(new { name = sectionName, items });
             }
 
             var data = new
             {
-                nastroj = "CodePlanner",
-                verzeNastroje = "2.0.1",
-                projekt = p.Nazev,
-                typProjektu = p.TypProjektuKlic,
-                typProjektuNazev = VratNazevTypu(p.TypProjektuKlic),
-                verzeSpecifikace = p.Verze,
-                vytvoreno = p.Vytvoreno,
-                upraveno = p.Upraveno,
-                napad = p.Napad,
-                referencniText = p.ReferencniText,
-                referencniNazev = p.ReferencniNazev,
-                sekce,
-                otevreneOtazky = OtevreneOtazky(p).Select(o => new { id = o.Id, otazka = o.GetText(p.TypProjektuKlic) }).ToList(),
-                kontrolaKonzistence = KonzistencniKontrola.Zkontroluj(p)
-                    .Select(n => new { zavaznost = n.Zavaznost.ToString(), titulek = n.Titulek, detail = n.Detail }).ToList(),
-                logRozhodnuti = p.Log.Select(r => new { cas = r.Cas, akce = r.Akce, detail = r.Detail }).ToList()
+                tool = "CodePlanner",
+                toolVersion = "2.1.0",
+                project = p.Name,
+                projectType = p.ProjectTypeKey,
+                projectTypeName = GetProjectTypeName(p.ProjectTypeKey),
+                specificationVersion = p.Version,
+                createdAt = p.CreatedAt,
+                updatedAt = p.UpdatedAt,
+                idea = p.Idea,
+                referenceText = p.ReferenceText,
+                referenceName = p.ReferenceName,
+                sections,
+                openQuestions = GetOpenQuestions(p).Select(o => new { id = o.Id, question = o.GetText(p.ProjectTypeKey) }).ToList(),
+                consistencyCheck = ConsistencyChecker.Check(p)
+                    .Select(n => new { severity = n.Severity.ToString(), title = n.Title, detail = n.Detail }).ToList(),
+                decisionLog = p.ChangeLog.Select(r => new { timestamp = r.Timestamp, action = r.Action, detail = r.Detail }).ToList()
             };
 
             return JsonSerializer.Serialize(data, JsonOpt);
         }
 
-        public static string RenderHtml(SpecProjekt p)
+        public static string RenderHtml(ProjectSpecification p)
         {
             var sb = new StringBuilder();
-            string nazev = string.IsNullOrWhiteSpace(p.Nazev) ? "(nepojmenovaný projekt)" : p.Nazev.Trim();
+            string name = string.IsNullOrWhiteSpace(p.Name) ? "(nepojmenovaný projekt)" : p.Name.Trim();
             
             sb.AppendLine("<!DOCTYPE html>");
             sb.AppendLine("<html lang=\"cs\">");
             sb.AppendLine("<head>");
             sb.AppendLine("    <meta charset=\"UTF-8\">");
             sb.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
-            sb.AppendLine($"    <title>Specifikace: {System.Net.WebUtility.HtmlEncode(nazev)}</title>");
+            sb.AppendLine($"    <title>Specifikace: {System.Net.WebUtility.HtmlEncode(name)}</title>");
             sb.AppendLine("    <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap\" rel=\"stylesheet\">");
             sb.AppendLine("    <style>");
             sb.AppendLine("        :root {");
             sb.AppendLine("            --primary: #10233F;");
-            sb.AppendLine("            --accent: #149689;");
+            sb.AppendLine("            --accent: #17B0A0;");
             sb.AppendLine("            --bg-page: #f5f7fa;");
             sb.AppendLine("            --bg-card: #ffffff;");
             sb.AppendLine("            --text: #212529;");
@@ -932,7 +928,7 @@ namespace CodePlanner.Core
             sb.AppendLine("        .card { background-color: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }");
             sb.AppendLine("        .card-title { font-size: 1.25rem; font-weight: 600; color: var(--primary); border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }");
             sb.AppendLine("        [data-theme=\"dark\"] .card-title { color: var(--accent); }");
-            sb.AppendLine("        .napad-quote { border-left: 4px solid var(--accent); padding: 8px 16px; background-color: rgba(20, 150, 137, 0.05); font-style: italic; border-radius: 0 8px 8px 0; margin-bottom: 12px; }");
+            sb.AppendLine("        .napad-quote { border-left: 4px solid var(--accent); padding: 8px 16px; background-color: rgba(23, 176, 160, 0.05); font-style: italic; border-radius: 0 8px 8px 0; margin-bottom: 12px; }");
             sb.AppendLine("        .spec-item { margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }");
             sb.AppendLine("        .spec-item:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }");
             sb.AppendLine("        .spec-question { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }");
@@ -957,6 +953,8 @@ namespace CodePlanner.Core
             sb.AppendLine("        .backlog-criteria-list { padding-left: 15px; font-size: 0.85rem; }");
             sb.AppendLine("        .backlog-criteria-item { list-style-type: square; margin-bottom: 2px; }");
             sb.AppendLine("        .completed .backlog-title { text-decoration: line-through; color: var(--text-light); }");
+            sb.AppendLine("        .finding-warning { border-left: 4px solid var(--prio-med); background-color: rgba(255,193,7,0.05); padding: 8px 12px; margin-bottom: 8px; border-radius: 0 6px 6px 0; font-size: 0.85rem; }");
+            sb.AppendLine("        .finding-conflict { border-left: 4px solid var(--prio-high); background-color: rgba(220,53,69,0.05); padding: 8px 12px; margin-bottom: 8px; border-radius: 0 6px 6px 0; font-size: 0.85rem; }");
             sb.AppendLine("    </style>");
             sb.AppendLine("<body>");
             sb.AppendLine("    <script>");
@@ -973,11 +971,11 @@ namespace CodePlanner.Core
             sb.AppendLine("    </script>");
             sb.AppendLine("    <div class=\"container\">");
             sb.AppendLine("        <header>");
-            sb.AppendLine($"            <h1>Specifikace: {System.Net.WebUtility.HtmlEncode(nazev)}</h1>");
+            sb.AppendLine($"            <h1>Specifikace: {System.Net.WebUtility.HtmlEncode(name)}</h1>");
             sb.AppendLine("            <div class=\"meta-subtitle\">");
-            sb.AppendLine($"                <span>Typ projektu: <strong>{System.Net.WebUtility.HtmlEncode(VratNazevTypu(p.TypProjektuKlic))}</strong></span>");
-            sb.AppendLine($"                <span>Verze: <strong>{p.Verze}</strong></span>");
-            sb.AppendLine($"                <span>Aktualizováno: <strong>{Datum(p.Upraveno)}</strong></span>");
+            sb.AppendLine($"                <span>Typ projektu: <strong>{System.Net.WebUtility.HtmlEncode(GetProjectTypeName(p.ProjectTypeKey))}</strong></span>");
+            sb.AppendLine($"                <span>Verze: <strong>{p.Version}</strong></span>");
+            sb.AppendLine($"                <span>Aktualizováno: <strong>{FormatDate(p.UpdatedAt)}</strong></span>");
             sb.AppendLine("            </div>");
             sb.AppendLine("            <button class=\"theme-switch\" onclick=\"toggleTheme()\">");
             sb.AppendLine("                <span id=\"theme-icon\">🌙</span> <span id=\"theme-label\">Tmavý režim</span>");
@@ -994,29 +992,29 @@ namespace CodePlanner.Core
             sb.AppendLine("                <div class=\"card filterable-section\">");
             sb.AppendLine("                    <div class=\"card-title\">Původní nápad</div>");
             sb.AppendLine("                    <div class=\"napad-quote\">");
-            if (string.IsNullOrWhiteSpace(p.Napad))
+            if (string.IsNullOrWhiteSpace(p.Idea))
                 sb.AppendLine("                        (zatím nezadán – napiš nebo nadiktuj svůj nápad)");
             else
-                foreach (var radek in p.Napad.Trim().Split('\n'))
+                foreach (var radek in p.Idea.Trim().Split('\n'))
                     sb.AppendLine($"                        {System.Net.WebUtility.HtmlEncode(radek.TrimEnd())}<br>");
             sb.AppendLine("                    </div>");
             sb.AppendLine("                </div>");
             sb.AppendLine();
 
-            foreach (var sekce in VratVsechnySekce(p))
+            foreach (var sekce in GetAllSections(p))
             {
-                var otazkySekce = VratOtazkyProjektu(p).Where(o => o.Sekce == sekce).ToList();
-                var odpovezene = otazkySekce.Where(o => OdpovedNa(p, o.Id) != null).ToList();
+                var otazkySekce = GetProjectQuestions(p).Where(o => o.Section == sekce).ToList();
+                var odpovezene = otazkySekce.Where(o => GetAnswerFor(p, o.Id) != null).ToList();
                 if (odpovezene.Count == 0) continue;
 
                 sb.AppendLine($"                <div class=\"card filterable-section\">");
                 sb.AppendLine($"                    <div class=\"card-title\">{System.Net.WebUtility.HtmlEncode(sekce)}</div>");
                 foreach (var ot in odpovezene)
                 {
-                    var odp = OdpovedNa(p, ot.Id);
-                    string predpokladBadge = odp.JePredpoklad ? "<span class=\"badge badge-predpoklad\">Předpoklad</span>" : "";
+                    var odp = GetAnswerFor(p, ot.Id);
+                    string predpokladBadge = odp.IsAssumption ? "<span class=\"badge badge-predpoklad\">Předpoklad</span>" : "";
                     sb.AppendLine("                    <div class=\"spec-item\">");
-                    sb.AppendLine($"                        <div class=\"spec-question\">{System.Net.WebUtility.HtmlEncode(ot.GetText(p.TypProjektuKlic))}{predpokladBadge}</div>");
+                    sb.AppendLine($"                        <div class=\"spec-question\">{System.Net.WebUtility.HtmlEncode(ot.GetText(p.ProjectTypeKey))}{predpokladBadge}</div>");
                     sb.AppendLine($"                        <div class=\"spec-answer\">{System.Net.WebUtility.HtmlEncode(odp.Text)}</div>");
                     sb.AppendLine("                    </div>");
                 }
@@ -1030,37 +1028,74 @@ namespace CodePlanner.Core
             sb.AppendLine("            <div class=\"right-column\">");
 
             // Metriky
-            if (p.Metriky != null && p.Metriky.CasVypoctu != default)
+            if (p.Metrics != null && p.Metrics.CalculationTimestamp != default)
             {
-                string komplexitaClass = p.Metriky.Komplexita.Contains("Vysoká") ? "prio-high" : (p.Metriky.Komplexita.Contains("Střední") ? "prio-med" : "prio-low");
+                string komplexitaClass = p.Metrics.Complexity.Contains("Vysoká") ? "prio-high" : (p.Metrics.Complexity.Contains("Střední") ? "prio-med" : "prio-low");
                 sb.AppendLine("                <div class=\"card filterable-section\">");
                 sb.AppendLine("                    <div class=\"card-title\">Projektové metriky</div>");
-                if (MetrikyJsouZastarale(p))
-                    sb.AppendLine($"                    <div class=\"stale-note\" style=\"background-color: rgba(255,193,7,0.15); border: 1px solid var(--prio-med); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;\">{PoznamkaZastaraleMetriky}</div>");
+                if (AreMetricsOutdated(p))
+                    sb.AppendLine($"                    <div class=\"stale-note\" style=\"background-color: rgba(255,193,7,0.15); border: 1px solid var(--prio-med); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;\">{OutdatedMetricsNote}</div>");
                 sb.AppendLine("                    <div class=\"metric-cards-container\">");
                 sb.AppendLine("                        <div class=\"metric-mini-card\">");
                 sb.AppendLine("                            <div class=\"metric-mini-label\">Vývoj (odhad)</div>");
-                sb.AppendLine($"                            <div class=\"metric-mini-value\">{System.Net.WebUtility.HtmlEncode(p.Metriky.CasovyOdhadMin)} - {System.Net.WebUtility.HtmlEncode(p.Metriky.CasovyOdhadMax)}</div>");
+                sb.AppendLine($"                            <div class=\"metric-mini-value\">{System.Net.WebUtility.HtmlEncode(p.Metrics.TimeEstimateMin)} - {System.Net.WebUtility.HtmlEncode(p.Metrics.TimeEstimateMax)}</div>");
                 sb.AppendLine("                        </div>");
                 sb.AppendLine("                        <div class=\"metric-mini-card\">");
                 sb.AppendLine("                            <div class=\"metric-mini-label\">Složitost</div>");
-                sb.AppendLine($"                            <div class=\"metric-mini-value\"><span class=\"badge badge-prio badge-{komplexitaClass}\" style=\"margin-left:0;\">{System.Net.WebUtility.HtmlEncode(p.Metriky.Komplexita)}</span></div>");
+                sb.AppendLine($"                            <div class=\"metric-mini-value\"><span class=\"badge badge-prio badge-{komplexitaClass}\" style=\"margin-left:0;\">{System.Net.WebUtility.HtmlEncode(p.Metrics.Complexity)}</span></div>");
                 sb.AppendLine("                        </div>");
                 sb.AppendLine("                        <div class=\"metric-mini-card\">");
                 sb.AppendLine("                            <div class=\"metric-mini-label\">Rozpočet</div>");
-                sb.AppendLine($"                            <div class=\"metric-mini-value\">{System.Net.WebUtility.HtmlEncode(p.Metriky.DoporucenyRozpocet)}</div>");
+                sb.AppendLine($"                            <div class=\"metric-mini-value\">{System.Net.WebUtility.HtmlEncode(p.Metrics.RecommendedBudget)}</div>");
                 sb.AppendLine("                        </div>");
                 sb.AppendLine("                        <div class=\"metric-mini-card\">");
                 sb.AppendLine("                            <div class=\"metric-mini-label\">Doporučený tým</div>");
-                sb.AppendLine($"                            <div class=\"metric-mini-value\">{System.Net.WebUtility.HtmlEncode(p.Metriky.SlozeniTymu)}</div>");
+                sb.AppendLine($"                            <div class=\"metric-mini-value\">{System.Net.WebUtility.HtmlEncode(p.Metrics.TeamComposition)}</div>");
                 sb.AppendLine("                        </div>");
                 sb.AppendLine("                    </div>");
                 sb.AppendLine("                    <div style=\"font-size:0.85rem; line-height:1.4; border-top:1px solid var(--border); padding-top:12px;\">");
                 sb.AppendLine("                        <strong>Architektura a technologie:</strong><br>");
-                foreach (var radek in p.Metriky.TechnickyRozbor.Split('\n'))
+                foreach (var radek in p.Metrics.TechnicalAnalysis.Split('\n'))
                 {
                     if (string.IsNullOrWhiteSpace(radek)) continue;
                     sb.AppendLine($"                        {System.Net.WebUtility.HtmlEncode(radek)}<br>");
+                }
+                sb.AppendLine("                    </div>");
+                sb.AppendLine("                </div>");
+                sb.AppendLine();
+            }
+
+            // Otevřené otázky
+            var otevrene = GetOpenQuestions(p);
+            if (otevrene.Count > 0)
+            {
+                sb.AppendLine("                <div class=\"card filterable-section\">");
+                sb.AppendLine($"                    <div class=\"card-title\">Otevřené otázky <span class=\"badge badge-predpoklad\" style=\"margin-left:8px;\">{otevrene.Count}</span></div>");
+                sb.AppendLine("                    <ul style=\"padding-left:20px; font-size:0.9rem;\">");
+                foreach (var ot in otevrene)
+                {
+                    string dopadText = ot.Impact == Impact.High ? "vysoký dopad" : "střední dopad";
+                    sb.AppendLine($"                        <li style=\"margin-bottom:6px;\"><strong>{System.Net.WebUtility.HtmlEncode(ot.GetText(p.ProjectTypeKey))}</strong> <span style=\"color:var(--text-light); font-size:0.8rem;\">({dopadText})</span></li>");
+                }
+                sb.AppendLine("                    </ul>");
+                sb.AppendLine("                </div>");
+                sb.AppendLine();
+            }
+
+            // Kontrola konzistence
+            var nalezy = ConsistencyChecker.Check(p);
+            if (nalezy.Count > 0)
+            {
+                sb.AppendLine("                <div class=\"card filterable-section\">");
+                sb.AppendLine("                    <div class=\"card-title\">Kontrola konzistence</div>");
+                sb.AppendLine("                    <div>");
+                foreach (var n in nalezy)
+                {
+                    string fClass = n.Severity == Severity.Conflict ? "finding-conflict" : "finding-warning";
+                    string pfx = n.Severity == Severity.Conflict ? "❗ <strong>ROZPOR:</strong> " : "⚠️ <strong>Varování:</strong> ";
+                    sb.AppendLine($"                        <div class=\"{fClass}\">");
+                    sb.AppendLine($"                            {pfx}<strong>{System.Net.WebUtility.HtmlEncode(n.Title)}</strong> – {System.Net.WebUtility.HtmlEncode(n.Detail)}");
+                    sb.AppendLine("                        </div>");
                 }
                 sb.AppendLine("                    </div>");
                 sb.AppendLine("                </div>");
@@ -1072,19 +1107,19 @@ namespace CodePlanner.Core
             {
                 sb.AppendLine("                <div class=\"card filterable-section\">");
                 sb.AppendLine("                    <div class=\"card-title\">Agilní backlog</div>");
-                if (StoriesJsouZastarale(p))
-                    sb.AppendLine($"                    <div class=\"stale-note\" style=\"background-color: rgba(255,193,7,0.15); border: 1px solid var(--prio-med); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;\">{PoznamkaZastaraleStories}</div>");
+                if (AreStoriesOutdated(p))
+                    sb.AppendLine($"                    <div class=\"stale-note\" style=\"background-color: rgba(255,193,7,0.15); border: 1px solid var(--prio-med); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem;\">{OutdatedStoriesNote}</div>");
                 foreach (var us in p.UserStories)
                 {
                     string safeId = new string((us.Id ?? "").Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_').ToArray());
-                    string prioClass = us.Priorita == "Vysoká" ? "prio-high" : (us.Priorita == "Střední" ? "prio-med" : "prio-low");
+                    string prioClass = us.Priority == "Vysoká" ? "prio-high" : (us.Priority == "Střední" ? "prio-med" : "prio-low");
                     sb.AppendLine($"                    <div class=\"backlog-item\" id=\"story-{safeId}\">");
                     sb.AppendLine($"                        <input type=\"checkbox\" class=\"backlog-checkbox\" onchange=\"toggleStory(this, 'story-{safeId}')\">");
                     sb.AppendLine("                        <div class=\"backlog-text\">");
-                    sb.AppendLine($"                            <div class=\"backlog-title\">{System.Net.WebUtility.HtmlEncode(us.Id)}: {System.Net.WebUtility.HtmlEncode(us.Titulek)} <span class=\"badge badge-prio badge-{prioClass}\">{System.Net.WebUtility.HtmlEncode(us.Priorita)}</span></div>");
-                    sb.AppendLine($"                            <div class=\"backlog-desc\">{System.Net.WebUtility.HtmlEncode(us.Popis)}</div>");
+                    sb.AppendLine($"                            <div class=\"backlog-title\">{System.Net.WebUtility.HtmlEncode(us.Id)}: {System.Net.WebUtility.HtmlEncode(us.Title)} <span class=\"badge badge-prio badge-{prioClass}\">{System.Net.WebUtility.HtmlEncode(us.Priority)}</span></div>");
+                    sb.AppendLine($"                            <div class=\"backlog-desc\">{System.Net.WebUtility.HtmlEncode(us.Description)}</div>");
                     sb.AppendLine("                            <ul class=\"backlog-criteria-list\">");
-                    foreach (var crit in us.Kriteria)
+                    foreach (var crit in us.Criteria)
                     {
                         sb.AppendLine($"                                <li class=\"backlog-criteria-item\">{System.Net.WebUtility.HtmlEncode(crit)}</li>");
                     }
@@ -1092,18 +1127,20 @@ namespace CodePlanner.Core
                     sb.AppendLine("                        </div>");
                     sb.AppendLine("                    </div>");
                 }
+                sb.AppendLine("                </div>");
+                sb.AppendLine();
             }
 
             // Záznam rozhodnutí (Log)
-            if (p.Log != null && p.Log.Count > 0)
+            if (p.ChangeLog != null && p.ChangeLog.Count > 0)
             {
                 sb.AppendLine("                <div class=\"card filterable-section\">");
                 sb.AppendLine("                    <div class=\"card-title\">Záznam rozhodnutí (Log)</div>");
                 sb.AppendLine("                    <div style=\"font-size:0.85rem; max-height:250px; overflow-y:auto;\">");
-                foreach (var log in p.Log)
+                foreach (var log in p.ChangeLog)
                 {
                     sb.AppendLine("                        <div style=\"margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px;\">");
-                    sb.AppendLine($"                            <span style=\"color:var(--text-light); font-weight:500;\">{log.Cas:d. M. yyyy v H:mm}</span> - <strong>{System.Net.WebUtility.HtmlEncode(log.Akce)}</strong><br>");
+                    sb.AppendLine($"                            <span style=\"color:var(--text-light); font-weight:500;\">{log.Timestamp:d. M. yyyy v H:mm}</span> - <strong>{System.Net.WebUtility.HtmlEncode(log.Action)}</strong><br>");
                     sb.AppendLine($"                            <span style=\"color:var(--text);\">{System.Net.WebUtility.HtmlEncode(log.Detail)}</span>");
                     sb.AppendLine("                        </div>");
                 }
@@ -1189,122 +1226,333 @@ namespace CodePlanner.Core
             return sb.ToString();
         }
 
-        // ---------- ukládání projektu ----------
+        // ---------- project storage ----------
 
-        /// <summary>Atomické uložení: JSON se nejdřív zapíše do souboru „cesta.tmp“ a teprve po úspěšném
-        /// zápisu se vymění za cílový soubor. Při přepisu existujícího projektu zůstane jeho předchozí
-        /// verze jako „cesta.bak“ – při pádu uprostřed zápisu tak nikdy nevznikne poškozený .vcbrief.</summary>
-        public static void UlozProjekt(SpecProjekt p, string cesta)
+        public static void SaveProject(ProjectSpecification p, string filepath)
         {
             string json = JsonSerializer.Serialize(p, JsonOpt);
 
-            // Zajistíme existenci cílového adresáře.
-            string slozka = Path.GetDirectoryName(Path.GetFullPath(cesta));
-            if (!string.IsNullOrEmpty(slozka)) Directory.CreateDirectory(slozka);
+            string folder = Path.GetDirectoryName(Path.GetFullPath(filepath));
+            if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
 
-            string tmp = cesta + ".tmp";
-            if (File.Exists(tmp)) File.Delete(tmp); // případný pozůstatek z dřívějšího přerušeného uložení
+            string tmp = filepath + ".tmp";
+            if (File.Exists(tmp)) File.Delete(tmp);
 
             File.WriteAllText(tmp, json, new UTF8Encoding(true));
 
-            if (File.Exists(cesta))
+            if (File.Exists(filepath))
             {
-                // Atomická výměna – původní obsah zůstane v záloze .bak.
-                File.Replace(tmp, cesta, cesta + ".bak");
+                File.Replace(tmp, filepath, filepath + ".bak");
             }
             else
             {
-                File.Move(tmp, cesta);
+                File.Move(tmp, filepath);
             }
         }
 
-        public static SpecProjekt NactiProjekt(string cesta)
+        public static ProjectSpecification LoadProject(string filepath)
         {
-            var text = File.ReadAllText(cesta);
-            var p = JsonSerializer.Deserialize<SpecProjekt>(text, JsonOpt);
-            if (p != null)
+            var text = File.ReadAllText(filepath);
+            var node = JsonNode.Parse(text);
+            if (node != null)
             {
-                if (p.Odpovedi == null) p.Odpovedi = new List<Odpoved>();
-                if (p.Log == null) p.Log = new List<Rozhodnuti>();
-                if (p.Otazky == null) p.Otazky = new List<Otazka>();
-                if (p.UserStories == null) p.UserStories = new List<UserStory>();
-                if (p.ChatHistory == null) p.ChatHistory = new List<ChatMessage>();
-                if (p.Metriky == null) p.Metriky = new ProjektMetriky();
-                if (p.AiNalezy == null) p.AiNalezy = new List<AiNalez>();
+                node = MigrateJson(node);
+                var p = node.Deserialize<ProjectSpecification>(JsonOpt);
+                if (p != null)
+                {
+                    if (p.Answers == null) p.Answers = new List<Answer>();
+                    if (p.ChangeLog == null) p.ChangeLog = new List<DecisionLogEntry>();
+                    if (p.Questions == null) p.Questions = new List<Question>();
+                    if (p.UserStories == null) p.UserStories = new List<UserStory>();
+                    if (p.ChatHistory == null) p.ChatHistory = new List<ChatMessage>();
+                    if (p.Metrics == null) p.Metrics = new ProjectMetrics();
+                    if (p.AiFindings == null) p.AiFindings = new List<AiFinding>();
+                    return p;
+                }
             }
-            return p ?? new SpecProjekt();
+            return new ProjectSpecification();
         }
+
+        private static JsonNode MigrateJson(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                var migrated = new JsonObject();
+                foreach (var prop in obj)
+                {
+                    string oldKey = prop.Key;
+                    string newKey = MapJsonKey(oldKey);
+                    migrated[newKey] = prop.Value != null ? MigrateJson(prop.Value.DeepClone()) : null;
+                }
+                return migrated;
+            }
+            else if (node is JsonArray arr)
+            {
+                var migrated = new JsonArray();
+                foreach (var item in arr)
+                {
+                    migrated.Add(item != null ? MigrateJson(item.DeepClone()) : null);
+                }
+                return migrated;
+            }
+            return node;
+        }
+
+        private static string MapJsonKey(string oldKey)
+        {
+            switch (oldKey)
+            {
+                // SpecProjekt / ProjectSpecification
+                case "Nazev":
+                case "nazev": return "Name";
+                case "Napad":
+                case "napad": return "Idea";
+                case "TypProjektu":
+                case "typProjektu": return "ProjectType";
+                case "TypProjektuKlic":
+                case "typProjektuKlic": return "ProjectTypeKey";
+                case "ReferencniText":
+                case "referencniText": return "ReferenceText";
+                case "ReferencniNazev":
+                case "referencniNazev": return "ReferenceName";
+                case "MockupBase64":
+                case "mockupBase64": return "MockupBase64";
+                case "MockupNazev":
+                case "mockupNazev": return "MockupName";
+                case "Vytvoreno":
+                case "vytvoreno": return "CreatedAt";
+                case "Upraveno":
+                case "upraveno": return "UpdatedAt";
+                case "Verze":
+                case "verze": return "Version";
+                case "Odpovedi":
+                case "odpovedi": return "Answers";
+                case "Log":
+                case "log": return "ChangeLog";
+                case "Otazky":
+                case "otazky": return "Questions";
+                case "UserStories":
+                case "userStories": return "UserStories";
+                case "ChatHistory":
+                case "chatHistory": return "ChatHistory";
+                case "Metriky":
+                case "metriky": return "Metrics";
+                case "CasGenerovaniStories":
+                case "casGenerovaniStories": return "StoriesGenerationTimestamp";
+                case "AiNalezy":
+                case "aiNalezy": return "AiFindings";
+                case "CasAiKontroly":
+                case "casAiKontroly": return "AiCheckTimestamp";
+
+                // Odpoved / Answer
+                case "OtazkaId":
+                case "otazkaId": return "QuestionId";
+                case "JePredpoklad":
+                case "jePredpoklad": return "IsAssumption";
+                case "Cas":
+                case "cas": return "Timestamp";
+
+                // Rozhodnuti / DecisionLogEntry
+                case "Akce":
+                case "akce": return "Action";
+                case "Detail":
+                case "detail": return "Detail";
+
+                // UserStory
+                case "Id":
+                case "id": return "Id";
+                case "Titulek":
+                case "titulek": return "Title";
+                case "Popis":
+                case "popis": return "Description";
+                case "Kriteria":
+                case "kriteria": return "Criteria";
+                case "Priorita":
+                case "priorita": return "Priority";
+
+                // ProjektMetriky / ProjectMetrics
+                case "CasovyOdhadMin":
+                case "casovyOdhadMin": return "TimeEstimateMin";
+                case "CasovyOdhadMax":
+                case "casovyOdhadMax": return "TimeEstimateMax";
+                case "Komplexita":
+                case "komplexita": return "Complexity";
+                case "SlozeniTymu":
+                case "slozeniTymu": return "TeamComposition";
+                case "DoporucenyRozpocet":
+                case "doporucenyRozpocet": return "RecommendedBudget";
+                case "TechnickyRozbor":
+                case "technickyRozbor": return "TechnicalAnalysis";
+                case "RizikaMetriky":
+                case "rizikaMetriky": return "MetricRisks";
+                case "CasVypoctu":
+                case "casVypoctu": return "CalculationTimestamp";
+
+                // AiNalez / AiFinding
+                case "Zavaznost":
+                case "zavaznost": return "Severity";
+
+                default: return oldKey;
+            }
+        }
+
+        public static List<Question> GetProjectQuestions(ProjectSpecification p)
+        {
+            if (p.Questions != null && p.Questions.Count > 0)
+            {
+                return p.Questions;
+            }
+            return StandardQuestions.All.ToList();
+        }
+
+        public static Question GetQuestionById(ProjectSpecification p, string id)
+            => GetProjectQuestions(p).FirstOrDefault(o => o.Id == id);
     }
 
-    /// <summary>Závažnost nálezu konzistenční kontroly.</summary>
-    public enum Zavaznost
+    /// <summary>Severity of consistency warning.</summary>
+    public enum Severity
     {
-        Rozpor,
-        Varovani
+        Conflict,
+        Warning
     }
 
-    /// <summary>Jeden nález kontroly konzistence (kap. 7: hlídání rozporů ve specifikaci).</summary>
-    public class Nalez
+    /// <summary>One consistency finding.</summary>
+    public class ConsistencyFinding
     {
-        public Zavaznost Zavaznost { get; set; }
-        public string Titulek { get; set; } = "";
+        public Severity Severity { get; set; }
+        public string Title { get; set; } = "";
         public string Detail { get; set; } = "";
     }
 
-    /// <summary>Pravidlová kontrola rozporů – offline, bez AI. Hrubé porovnání klíčových slov:
-    /// cílem je upozornit na možný problém, ne vynášet soudy. Falešný poplach je přijatelný, mlčení ne.</summary>
-    public static class KonzistencniKontrola
+    public static class ConsistencyChecker
     {
-        public static List<Nalez> Zkontroluj(SpecProjekt p)
+        public static List<ConsistencyFinding> Check(ProjectSpecification p)
         {
-            var nalezy = new List<Nalez>();
-            ZkontrolujOfflineOnline(p, nalezy);
-            ZkontrolujWebOffline(p, nalezy);
-            ZkontrolujOsobniUdaje(p, nalezy);
-            ZkontrolujNonGoals(p, nalezy);
-            ZkontrolujAkceptaci(p, nalezy);
-            ZkontrolujExport(p, nalezy);
-            ZkontrolujPlatformu(p, nalezy);
-            ZkontrolujPredpoklady(p, nalezy);
-            ZkontrolujChybejiciNapad(p, nalezy);
-            ZkontrolujSQLiteWeb(p, nalezy);
-            ZkontrolujUlohyBezAuth(p, nalezy);
-            return nalezy;
+            var findings = new List<ConsistencyFinding>();
+            CheckOfflineOnline(p, findings);
+            CheckWebOffline(p, findings);
+            CheckPersonalData(p, findings);
+            CheckNonGoals(p, findings);
+            CheckAcceptanceCriteria(p, findings);
+            CheckDataExport(p, findings);
+            CheckPlatform(p, findings);
+            CheckAssumptions(p, findings);
+            CheckMissingIdea(p, findings);
+            CheckSqliteOnWeb(p, findings);
+            CheckRolesWithoutAuth(p, findings);
+            CheckBackupStrategy(p, findings);
+            CheckApiDocumentation(p, findings);
+            return findings;
         }
 
-        // ---------- pravidla ----------
+        private static string TextOdpovedi(ProjectSpecification p, string questionId)
+        {
+            var o = SpecificationService.GetAnswerFor(p, questionId);
+            return o != null ? o.Text : "";
+        }
 
-        /// <summary>Specifikace tvrdí offline, ale jinde se mluví o cloudu/synchronizaci/online.</summary>
-        private static void ZkontrolujOfflineOnline(SpecProjekt p, List<Nalez> nalezy)
+        private static bool RikaOffline(ProjectSpecification p)
+        {
+            string s = Norm(TextOdpovedi(p, "tech-offline"));
+            return s.Contains("plne offline") || s.Contains("lokalni uklada") || s.Contains("bez internetu");
+        }
+
+        private static List<string> Zdroje(ProjectSpecification p, params string[] excludeIds)
+        {
+            var list = new List<string>();
+            foreach (var ot in SpecificationService.GetProjectQuestions(p))
+            {
+                if (excludeIds.Contains(ot.Id)) continue;
+                var o = SpecificationService.GetAnswerFor(p, ot.Id);
+                if (o != null && !o.IsAssumption && !string.IsNullOrWhiteSpace(o.Text))
+                {
+                    list.Add("otázka „" + ot.GetText(p.ProjectTypeKey) + "“: '" + o.Text + "'");
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(p.Idea))
+            {
+                list.Add("původní nápad: '" + p.Idea + "'");
+            }
+            return list;
+        }
+
+        private static string NajdiSlovo(List<string> zdroje, string[] hledana, out string zdroj)
+        {
+            foreach (var z in zdroje)
+            {
+                string nz = Norm(z);
+                foreach (var h in hledana)
+                {
+                    if (nz.Contains(Norm(h)))
+                    {
+                        zdroj = z.Split(':')[0];
+                        return h;
+                    }
+                }
+            }
+            zdroj = null;
+            return null;
+        }
+
+        private static string Norm(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            var sb = new StringBuilder();
+            foreach (char c in text.ToLower())
+            {
+                switch (c)
+                {
+                    case 'á': sb.Append('a'); break;
+                    case 'č': sb.Append('c'); break;
+                    case 'ď': sb.Append('d'); break;
+                    case 'é': sb.Append('e'); break;
+                    case 'ě': sb.Append('e'); break;
+                    case 'í': sb.Append('i'); break;
+                    case 'ň': sb.Append('n'); break;
+                    case 'ó': sb.Append('o'); break;
+                    case 'ř': sb.Append('r'); break;
+                    case 'š': sb.Append('s'); break;
+                    case 'ť': sb.Append('t'); break;
+                    case 'ú': sb.Append('u'); break;
+                    case 'ů': sb.Append('u'); break;
+                    case 'ý': sb.Append('y'); break;
+                    case 'ž': sb.Append('z'); break;
+                    default: sb.Append(c); break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        // ---------- rules ----------
+
+        private static void CheckOfflineOnline(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             if (!RikaOffline(p)) return;
             var zdroje = Zdroje(p, "tech-offline");
             string zdroj;
             string slovo = NajdiSlovo(zdroje, new[] { "cloud", "synchronizac", "online" }, out zdroj);
             if (slovo != null)
-                nalezy.Add(new Nalez
+                findings.Add(new ConsistencyFinding
                 {
-                    Zavaznost = Zavaznost.Rozpor,
-                    Titulek = "Offline vs. online",
+                    Severity = Severity.Conflict,
+                    Title = "Offline vs. online",
                     Detail = "Technika říká „funguje offline“, ale " + zdroj + " zmiňuje „" + slovo + "“. Rozhodni, co platí."
                 });
         }
 
-        /// <summary>Webová platforma + požadavek plně offline = jde jen jako PWA, stojí za ověření.</summary>
-        private static void ZkontrolujWebOffline(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckWebOffline(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             string plat = Norm(TextOdpovedi(p, "tech-platforma"));
             if (!RikaOffline(p) || (!plat.Contains("web") && !plat.Contains("prohlizec"))) return;
-            nalezy.Add(new Nalez
+            findings.Add(new ConsistencyFinding
             {
-                Zavaznost = Zavaznost.Varovani,
-                Titulek = "Web + plně offline",
+                Severity = Severity.Warning,
+                Title = "Web + plně offline",
                 Detail = "Webová aplikace bez internetu funguje jen jako PWA s offline režimem – ověř, jestli to tak myslíš."
             });
         }
 
-        /// <summary>Tvrdíme „bez osobních údajů“, ale jinde se objevují jména, e-maily, registrace…</summary>
-        private static void ZkontrolujOsobniUdaje(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckPersonalData(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             string data = Norm(TextOdpovedi(p, "data-obsah"));
             bool bezOsobnich = data.Contains("bez osobnich") || data.Contains("neosobni") || data.Contains("zadne osobni");
@@ -1314,19 +1562,18 @@ namespace CodePlanner.Core
             string zdroj;
             string slovo = NajdiSlovo(zdroje, new[] { "jmeno", "jmena", "email", "e-mail", "telefon", "heslo", "registrac", "prihlas" }, out zdroj);
             if (slovo != null)
-                nalezy.Add(new Nalez
+                findings.Add(new ConsistencyFinding
                 {
-                    Zavaznost = Zavaznost.Rozpor,
-                    Titulek = "Osobní údaje",
+                    Severity = Severity.Conflict,
+                    Title = "Osobní údaje",
                     Detail = "Data říkají „bez osobních údajů“, ale " + zdroj + " zmiňuje „" + slovo + "“. Osobní údaje = GDPR a vyšší nároky."
                 });
         }
 
-        /// <summary>Něco je v non-goals, ale jinde se to popisuje jako funkce.</summary>
-        private static void ZkontrolujNonGoals(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckNonGoals(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
-            var odp = SpecSluzba.OdpovedNa(p, "rozsah-nongoals");
-            if (odp == null || odp.JePredpoklad) return;
+            var odp = SpecificationService.GetAnswerFor(p, "rozsah-nongoals");
+            if (odp == null || odp.IsAssumption) return;
 
             var stop = new HashSet<string> { "zadne", "nebude", "nebudou", "nechci", "nesmi", "prvni", "verze", "verzi",
                 "aplikace", "appka", "zatim", "pozdeji", "budou", "chceme", "nechceme", "resit", "nema", "mit" };
@@ -1339,169 +1586,101 @@ namespace CodePlanner.Core
                     .Split(new[] { ' ', '.', '!', '?', '(', ')', '"', '-', ':' }, StringSplitOptions.RemoveEmptyEntries)
                     .Where(w => w.Length >= 5 && !stop.Contains(w));
 
-                foreach (var w in slova)
+                foreach (var s in slova)
                 {
-                    string zdrojNg = null;
-                    foreach (var z in zdroje)
-                        if (z.Value.Contains(w)) { zdrojNg = z.Key; break; }
-                    if (zdrojNg == null) continue;
-
-                    nalezy.Add(new Nalez
+                    string zdroj;
+                    string slovo = NajdiSlovo(zdroje, new[] { s }, out zdroj);
+                    if (slovo != null)
                     {
-                        Zavaznost = Zavaznost.Varovani,
-                        Titulek = "Non-goal se objevuje jinde",
-                        Detail = "„" + fragment.Trim() + "“ je v non-goals, ale " + zdrojNg + " o tom mluví („" + w + "“). Patří to do v1, nebo ne?"
-                    });
-                    hitu++;
-                    break;
+                        hitu++;
+                        findings.Add(new ConsistencyFinding
+                        {
+                            Severity = Severity.Warning,
+                            Title = "Non-goal popsán jako cíl",
+                            Detail = "V non-goals vylučuješ „" + fragment.Trim() + "“, ale " + zdroj + " obsahuje zmínku o „" + slovo + "“."
+                        });
+                        if (hitu >= 3) return; // Max 3 varování
+                    }
                 }
-                if (hitu >= 2) break;
             }
         }
 
-        /// <summary>Akceptační kritéria moc stručná na to, aby šla ověřit.</summary>
-        private static void ZkontrolujAkceptaci(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckAcceptanceCriteria(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
-            var odp = SpecSluzba.OdpovedNa(p, "akceptace");
-            if (odp == null || odp.JePredpoklad) return;
-            if (Norm(odp.Text).Trim().Length >= 20) return;
-            nalezy.Add(new Nalez
-            {
-                Zavaznost = Zavaznost.Varovani,
-                Titulek = "Akceptace je moc stručná",
-                Detail = "Podle takhle krátkých kritérií nepůjde poznat, že je hotovo. Napiš 2–3 konkrétní ověřitelné podmínky."
-            });
+            string akc = Norm(TextOdpovedi(p, "akceptace"));
+            if (string.IsNullOrEmpty(akc)) return;
+
+            bool vagni = akc.Contains("podle specifikace") || akc.Contains("budou splneny") ||
+                          akc.Contains("vsechny body") || akc.Contains("az bude hotovo");
+            if (vagni)
+                findings.Add(new ConsistencyFinding
+                {
+                    Severity = Severity.Warning,
+                    Title = "Vágní akceptační kritéria",
+                    Detail = "Kritéria říkají „podle specifikace / až to bude fungovat“. Zkus uvést měřitelné cíle (např. ruční průchod scénářem)."
+                });
         }
 
-        /// <summary>Export je odmítnutý, ale jinde se o něm mluví.</summary>
-        private static void ZkontrolujExport(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckDataExport(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             string exp = Norm(TextOdpovedi(p, "data-export"));
-            bool bezExportu = exp.Contains("bez export") || exp.Contains("zadny export");
-            if (!bezExportu) return;
+            bool rikaBezExportu = exp.Contains("zadny export") || exp.Contains("netreba export") || exp.Contains("pouze v aplikaci") || exp.Contains("neni vyzadovan") || (exp.Contains("zadny") && exp.Contains("export"));
+            if (!rikaBezExportu) return;
 
-            // non-goals a rizika legitimně říkají „bez exportu“ – ty nekontrolujeme
-            var zdroje = Zdroje(p, "data-export", "rozsah-nongoals", "rizika", "akceptace", "tech-offline", "tech-platforma", "cil-uzivatele");
+            var zdroje = Zdroje(p, "data-export");
             string zdroj;
-            string slovo = NajdiSlovo(zdroje, new[] { "export", "csv", "tisk", "import", "do pdf", "sestav" }, out zdroj);
+            string slovo = NajdiSlovo(zdroje, new[] { "export", "stahnout", "stahovani", "zaloha", "zalohovani" }, out zdroj);
             if (slovo != null)
-                nalezy.Add(new Nalez
+                findings.Add(new ConsistencyFinding
                 {
-                    Zavaznost = Zavaznost.Rozpor,
-                    Titulek = "Export ano, nebo ne?",
-                    Detail = "Data říkají „bez exportu“, ale " + zdroj + " zmiňuje „" + slovo + "“. Export je levný teď, drahý dodatečně."
+                    Severity = Severity.Conflict,
+                    Title = "Export dat vs. žádný export",
+                    Detail = "V exportu odmítáš exporty, ale " + zdroj + " zmiňuje „" + slovo + "“. Rozhodni, jestli data půjde stáhnout."
                 });
         }
 
-        /// <summary>Platforma je desktop/Windows, ale jinde se mluví o mobilu.</summary>
-        private static void ZkontrolujPlatformu(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckPlatform(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             string plat = Norm(TextOdpovedi(p, "tech-platforma"));
-            bool desktop = plat.Contains("windows") || plat.Contains("desktop") || plat.Contains("pocitac");
-            if (!desktop) return;
+            if (string.IsNullOrEmpty(plat)) return;
 
-            var zdroje = Zdroje(p, "tech-platforma");
-            string zdroj;
-            string slovo = NajdiSlovo(zdroje, new[] { "mobil", "telefon", "android", "iphone" }, out zdroj);
-            if (slovo != null)
-                nalezy.Add(new Nalez
+            bool web = plat.Contains("web") || plat.Contains("prohlizec") || plat.Contains("browser");
+            bool mob = plat.Contains("mobil") || plat.Contains("android") || plat.Contains("ios") || plat.Contains("telefon");
+            bool dsk = plat.Contains("desktop") || plat.Contains("windows") || plat.Contains("macos") || plat.Contains("linux") || plat.Contains("pc");
+
+            if (web && mob && dsk)
+                findings.Add(new ConsistencyFinding
                 {
-                    Zavaznost = Zavaznost.Varovani,
-                    Titulek = "Desktop vs. mobil",
-                    Detail = "Platforma je Windows/desktop, ale " + zdroj + " zmiňuje „" + slovo + "“. Patří mobil do první verze?"
+                    Severity = Severity.Warning,
+                    Title = "Příliš široký záběr platforem",
+                    Detail = "Plánuješ web, mobil i desktop najednou. Pro MVP se doporučuje začít jedinou platformou (např. webem)."
                 });
         }
 
-        /// <summary>Moc předpokladů u otázek s vysokým dopadem = křehká specifikace.</summary>
-        private static void ZkontrolujPredpoklady(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckAssumptions(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
-            int pocet = SpecSluzba.VratOtazkyProjektu(p).Count(ot =>
-            {
-                if (ot.Dopad != Dopad.Vysoky) return false;
-                var o = SpecSluzba.OdpovedNa(p, ot.Id);
-                return o != null && o.JePredpoklad;
-            });
-            if (pocet < 3) return;
-            nalezy.Add(new Nalez
-            {
-                Zavaznost = Zavaznost.Varovani,
-                Titulek = "Hodně předpokladů s vysokým dopadem",
-                Detail = "Specifikace stojí na " + pocet + " nepotvrzených předpokladech s vysokým dopadem. Projdi je a potvrď, ať agent nestaví na písku."
-            });
+            int pCount = SpecificationService.GetAssumptionsCount(p);
+            if (pCount >= 3)
+                findings.Add(new ConsistencyFinding
+                {
+                    Severity = Severity.Warning,
+                    Title = "Vysoký počet předpokladů (" + pCount + ")",
+                    Detail = "Máš nahrazeno " + pCount + " otázek výchozími předpoklady. Zkus na ně odpovědět pro přesnější zadání."
+                });
         }
 
-        /// <summary>Odpovídá se na otázky, ale chybí původní nápad.</summary>
-        private static void ZkontrolujChybejiciNapad(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckMissingIdea(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
-            if (!string.IsNullOrWhiteSpace(p.Napad) || p.Odpovedi.Count < 3) return;
-            nalezy.Add(new Nalez
-            {
-                Zavaznost = Zavaznost.Varovani,
-                Titulek = "Chybí původní nápad",
-                Detail = "Máš zodpovězené otázky, ale pole s nápadem je prázdné. Bez něj chybí kontext, proč appka vzniká."
-            });
+            if (string.IsNullOrWhiteSpace(p.Idea) && SpecificationService.GetAnsweredCount(p) > 0)
+                findings.Add(new ConsistencyFinding
+                {
+                    Severity = Severity.Warning,
+                    Title = "Prázdný původní nápad",
+                    Detail = "Zadání obsahuje odpovědi na otázky, ale chybí původní nápad. Doplň původní myšlenku v kroku 1."
+                });
         }
 
-        // ---------- pomocné ----------
-
-        private static bool RikaOffline(SpecProjekt p)
-        {
-            string off = Norm(TextOdpovedi(p, "tech-offline"));
-            return off.Contains("offline") || off.Contains("bez internetu") || off.Contains("bez pripojeni");
-        }
-
-        /// <summary>Normalizace pro porovnávání: malá písmena, bez české diakritiky.
-        /// Ruční mapování – string.Normalize() nefunguje s InvariantGlobalization (bez ICU).</summary>
-        private const string Diakritika = "áčďéěíňóřšťúůýž";
-        private const string BezDiakritiky = "acdeeinorstuuyz";
-
-        private static string Norm(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return "";
-            var sb = new StringBuilder(s.Length);
-            foreach (char puvodni in s)
-            {
-                char c = char.ToLowerInvariant(puvodni);
-                int i = Diakritika.IndexOf(c);
-                sb.Append(i >= 0 ? BezDiakritiky[i] : c);
-            }
-            return sb.ToString();
-        }
-
-        private static string TextOdpovedi(SpecProjekt p, string id)
-        {
-            var o = SpecSluzba.OdpovedNa(p, id);
-            return o == null ? "" : o.Text;
-        }
-
-        /// <summary>Texty k prohledání: nápad + všechny odpovědi kromě vyjmenovaných otázek (klíč = popis zdroje, hodnota = normalizovaný text).</summary>
-        private static List<KeyValuePair<string, string>> Zdroje(SpecProjekt p, params string[] krome)
-        {
-            var vysledek = new List<KeyValuePair<string, string>>();
-            if (!string.IsNullOrWhiteSpace(p.Napad))
-                vysledek.Add(new KeyValuePair<string, string>("nápad", Norm(p.Napad)));
-            foreach (var o in p.Odpovedi)
-            {
-                if (krome.Contains(o.OtazkaId)) continue;
-                var ot = SpecSluzba.Podle(p, o.OtazkaId);
-                if (ot == null) continue;
-                vysledek.Add(new KeyValuePair<string, string>("odpověď na „" + Zkratka(ot.Text) + "“", Norm(o.Text)));
-            }
-            return vysledek;
-        }
-
-        private static string Zkratka(string s) => s.Length <= 40 ? s : s.Substring(0, 39) + "…";
-
-        private static string NajdiSlovo(List<KeyValuePair<string, string>> zdroje, string[] slova, out string zdroj)
-        {
-            foreach (var z in zdroje)
-                foreach (var s in slova)
-                    if (z.Value.Contains(s)) { zdroj = z.Key; return s; }
-            zdroj = null;
-            return null;
-        }
-
-        private static void ZkontrolujSQLiteWeb(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckSqliteOnWeb(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             string plat = Norm(TextOdpovedi(p, "tech-platforma"));
             string data = Norm(TextOdpovedi(p, "data-obsah"));
@@ -1511,16 +1690,16 @@ namespace CodePlanner.Core
 
             if (isWeb && isSqlite && !data.Contains("wasm") && !data.Contains("localstorage"))
             {
-                nalezy.Add(new Nalez
+                findings.Add(new ConsistencyFinding
                 {
-                    Zavaznost = Zavaznost.Varovani,
-                    Titulek = "SQLite databáze na webu",
+                    Severity = Severity.Warning,
+                    Title = "SQLite databáze na webu",
                     Detail = "Technologie uvádí webovou aplikaci a SQLite databázi. SQLite standardně neběží v prohlížeči. Zvaž LocalStorage/IndexedDB, nebo to uveď jako WASM/backend."
                 });
             }
         }
 
-        private static void ZkontrolujUlohyBezAuth(SpecProjekt p, List<Nalez> nalezy)
+        private static void CheckRolesWithoutAuth(ProjectSpecification p, List<ConsistencyFinding> findings)
         {
             string uziv = Norm(TextOdpovedi(p, "cil-uzivatele"));
             string tech = Norm(TextOdpovedi(p, "tech-platforma"));
@@ -1532,15 +1711,68 @@ namespace CodePlanner.Core
 
             if (maRole && !maPrihlaseni)
             {
-                nalezy.Add(new Nalez
+                findings.Add(new ConsistencyFinding
                 {
-                    Zavaznost = Zavaznost.Varovani,
-                    Titulek = "Uživatelské role bez přihlašování",
+                    Severity = Severity.Warning,
+                    Title = "Uživatelské role bez přihlašování",
                     Detail = "Zmiňuješ uživatelské role (např. administrátor, oprávnění), ale v technologii ani datech se neřeší autentizace. Jak se role rozpoznají?"
+                });
+            }
+        }
+
+        private static void CheckBackupStrategy(ProjectSpecification p, List<ConsistencyFinding> findings)
+        {
+            string data = Norm(TextOdpovedi(p, "data-obsah"));
+            string rizika = Norm(TextOdpovedi(p, "rizika-reseni"));
+
+            bool utilizesDatabase = data.Contains("databaze") || data.Contains("db") || data.Contains("postgresql") ||
+                                    data.Contains("mysql") || data.Contains("mssql") || data.Contains("mongodb") ||
+                                    data.Contains("oracle") || data.Contains("sql") || data.Contains("sqlite");
+
+            bool mentionsBackup = rizika.Contains("zaloha") || rizika.Contains("zaloh") || rizika.Contains("backup") ||
+                                  rizika.Contains("dump") || rizika.Contains("sync") ||
+                                  data.Contains("zaloha") || data.Contains("zaloh") || data.Contains("backup");
+
+            if (utilizesDatabase && !mentionsBackup)
+            {
+                findings.Add(new ConsistencyFinding
+                {
+                    Severity = Severity.Warning,
+                    Title = "Chybějící strategie zálohování",
+                    Detail = "Aplikace využívá databázi, ale v krizovém plánu chybí zmínka o zálohování (záloha, backup, dump). Zvažte doplnění strategie záloh."
+                });
+            }
+        }
+
+        private static void CheckApiDocumentation(ProjectSpecification p, List<ConsistencyFinding> findings)
+        {
+            string tech = Norm(TextOdpovedi(p, "tech-platforma"));
+            string data = Norm(TextOdpovedi(p, "data-obsah"));
+
+            bool mentionsApi = tech.Contains("api") || tech.Contains("rest") || tech.Contains("graphql") ||
+                              tech.Contains("soap") || tech.Contains("webhook") || tech.Contains("integrace") ||
+                              tech.Contains("tretich stran") || tech.Contains("tretichstran") || tech.Contains("napojeni") ||
+                              data.Contains("api") || data.Contains("rest") || data.Contains("integrace");
+
+            bool hasReference = !string.IsNullOrWhiteSpace(p.ReferenceText);
+            bool mentionsDocs = false;
+            
+            if (hasReference)
+            {
+                string refs = Norm(p.ReferenceText);
+                mentionsDocs = refs.Contains("dokumentace") || refs.Contains("doc") || refs.Contains("swagger") ||
+                               refs.Contains("openapi") || refs.Contains("schema") || refs.Contains("specification");
+            }
+
+            if (mentionsApi && !mentionsDocs)
+            {
+                findings.Add(new ConsistencyFinding
+                {
+                    Severity = Severity.Warning,
+                    Title = "Chybějící dokumentace k externímu API",
+                    Detail = "Projekt zmiňuje integraci externího API nebo služeb třetích stran, ale chybí reference na jejich dokumentaci (dokumentace, swagger, OpenAPI)."
                 });
             }
         }
     }
 }
-// konec souboru
-

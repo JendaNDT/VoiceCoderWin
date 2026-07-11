@@ -8,19 +8,19 @@ namespace CodePlanner.Core
     /// <summary>
     /// Zprostředkovává nahrávání zvuku z mikrofonu na Windows pomocí MCI (winmm.dll).
     /// </summary>
-    public static class HlasovyVstup
+    public static class VoiceRecorder
     {
         [DllImport("winmm.dll", EntryPoint = "mciSendStringA", CharSet = CharSet.Ansi)]
         private static extern int mciSendString(string lpstrCommand, StringBuilder lpstrReturnString, int uReturnLength, IntPtr hwndCallback);
 
-        private static bool _nahravam = false;
+        private static bool _recording = false;
         private static readonly object _lock = new object();
 
-        public static void SpustNahravani()
+        public static void StartRecording()
         {
             lock (_lock)
             {
-                if (_nahravam) return;
+                if (_recording) return;
 
                 // zavřeme předchozí instanci pro jistotu
                 mciSendString("close recsound", null, 0, IntPtr.Zero);
@@ -37,15 +37,15 @@ namespace CodePlanner.Core
                 // spustíme nahrávání
                 err = mciSendString("record recsound", null, 0, IntPtr.Zero);
                 if (err != 0) throw new InvalidOperationException("Nepodařilo se spustit nahrávání (MCI).");
-                _nahravam = true;
+                _recording = true;
             }
         }
 
-        public static string ZastavNahravani()
+        public static string StopRecording()
         {
             lock (_lock)
             {
-                if (!_nahravam) return null;
+                if (!_recording) return null;
 
                 string cesta = Path.Combine(Path.GetTempPath(), $"voice_input_{Guid.NewGuid():N}.wav");
                 
@@ -59,7 +59,7 @@ namespace CodePlanner.Core
                 int err = mciSendString($"save recsound \"{cesta}\"", null, 0, IntPtr.Zero);
                 mciSendString("close recsound", null, 0, IntPtr.Zero);
                 
-                _nahravam = false;
+                _recording = false;
 
                 if (err != 0 || !File.Exists(cesta)) return null;
                 return cesta;

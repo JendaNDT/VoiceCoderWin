@@ -1,12 +1,12 @@
 # CodePlanner – Project Status
-*Naposled aktualizováno: 11. 7. 2026 (v2.0.1)*
+*Naposled aktualizováno: 11. 7. 2026 (v2.1.0)*
 
 ## 🎯 Co to je
 Windows .exe demonstrátor projektu CodePlanner AI (dle PDF návrhu, kap. 18): z volně popsaného nápadu vytvoří řízenými otázkami verzovanou specifikaci s exportem pro kódovacího agenta.
 Stack: C# / .NET 8, WinForms, self-contained single-file exe (win-x64), kompilováno ze sandboxu přes EnableWindowsTargeting.
 
 ## ⏭️ Příští krok
-**Jenda otestuje verzi v2.0.1 – plně refaktorovaný a stabilizovaný CodePlanner s Gemini API.** Spusťte zkompilovaný soubor, otestujte integraci s Gemini, test připojení, AI analýzu, odhady i exporty!
+**Jenda otestuje verzi v2.1.0 – plně refaktorovaný a stabilizovaný CodePlanner v angličtině s novými pravidly a design systémem.** Spusťte zkompilovaný ZIP, otestujte funkčnost a načtení starých .vcbrief souborů!
 
 ## ✅ Hotovo
 - v0.1 kompletní a **ověřená Jendou na reálných Windows** (spuštění, okno, diktování, exporty – vše OK)
@@ -40,17 +40,18 @@ Stack: C# / .NET 8, WinForms, self-contained single-file exe (win-x64), kompilov
 - **v1.8: AI odhad náročnosti a metriky** – integrován panel metrik, který zkoumá specifikaci i backlog a spočítá odhad pracnosti (hodiny), složitost projektu, optimální tým, rozpočet, technický rozbor a rizika odhadu. 124 testů OK.
 - **v1.9: interaktivní HTML export (micro-site)** – přidán export do jednoho přenosného HTML souboru s plnohodnotným interaktivním webovým portálem projektu (přepínač tmavého režimu, odškrtávací backlog, live search a responzivní vzhled). 128 testů OK.
 - **v2.0.1: refaktor, stabilizace a opravy kritických chyb** – dokončena modularizace (rozdělení MainForm a SpecCore na samostatné soubory), vyřešeny 4 kritické bezpečnostní a stabilizační nálezy (L1, L2, S1 a S2), zavedeny příslušné jednotkové testy a celkový počet testů vzrostl na 174 (všechny OK).
+- **v2.1.0: překlad do angličtiny, design systém a nová pravidla konzistence** – kompletní překlad datových struktur jádra, API klienta, hlasového nahrávání a formulářů z češtiny do angličtiny. Zajištěna 100% zpětná kompatibilita pro načítání českých specifikací `.vcbrief`. Sjednoceny barvy a písma do `DesignSystem.cs`, čímž se zamezilo GDI leakům. Přidána nová pravidla offline kontroly konzistence: **Rule 12 (strategie zálohování)** a **Rule 13 (dokumentace k externímu API)**. Testovací sada byla přepsána a úspěšně otestována (všechny testy OK). Zkompilován finální distribuční ZIP `CodePlanner-v2.1.0.zip`.
 
 ## 📝 TODO
 ### MVP (nutné pro v1)
-- Jenda otestuje verzi v2.0.1 (zkompilovaný ZIP a funkčnost s Gemini API)
+- Jenda otestuje verzi v2.1.0 (zkompilovaný ZIP a funkčnost s Gemini API)
 
 ### Backlog (později)
 - Napojení na Claude API (AI otázky a generování specifikace) – vlastní API klíč v nastavení (přeskočeno, Gemini stačí)
 - Další pravidla konzistence podle zkušeností z používání
 
 ## 🐛 Známé bugy
-- Zatím žádné hlášené. Riziko k ověření ve v0.2: RTF náhled (nová věc) – při chybě má fallback na syrový markdown.
+- Zatím žádné hlášené.
 
 ## 🏗️ Klíčová rozhodnutí
 - **Rozsah v1:** demonstrátor bez AI dle kap. 18 PDF – ověřit workflow otázky→specifikace dřív, než se přidá AI a agenti.
@@ -64,19 +65,22 @@ Stack: C# / .NET 8, WinForms, self-contained single-file exe (win-x64), kompilov
 - **JSON export:** stabilní struktura (sekce → položky → predpoklad flag), aby ji později mohl číst orchestrátor beze změn.
 - **Náhled specifikace (v0.2):** vlastní mini-převod markdown→RTF přímo v MainForm (žádná externí knihovna – jednodušší build, žádné závislosti); při chybě fallback na plain text.
 - **Git na ploše:** připojená složka nepodporuje mazání/zámky souborů → commit+push se dělá ze sandboxu, ne přímo ze složky.
-- **GitHub přístup:** Jendův fine-grained token (jen repo CodePlannerWin, Contents RW) je uložený v `.github_token` ve složce projektu, je v .gitignore a do repa nesmí. Používat pro push i releases. Až vyprší, vygenerovat nový stejným postupem.
+- **GitHub přístup:** Jendův fine-grained token (jen repo CodePlannerWin, Contents RW) is uložený v `.github_token` ve složce projektu, je v .gitignore a do repa nesmí. Používat pro push i releases. Až vyprší, vygenerovat nový stejným postupem.
 - **Kontrola konzistence (v0.3):** pravidlová, bez AI – porovnává klíčová slova bez diakritiky. Falešný poplach je OK, mlčení ne. Vlastní odstranění diakritiky (mapovací tabulka), protože `string.Normalize()` nefunguje s InvariantGlobalization na Linuxu.
 - **Šablony otázek (v0.4):** přepínání šablon automaticky přizpůsobuje znění a nápovědy. Pro zjednodušení si systém při změně šablony zachovává uživatelské ruční odpovědi, ale mění výchozí nepotvrzené předpoklady (`JePredpoklad = true`) na odpovídající hodnoty z nové šablony.
 - **Sandbox (pro Clauda):** mount občas servíruje starou velikost souboru (čtení je uříznuté) → před buildem ověřovat grep počty; při zaseknutí rekonstruovat soubory v /tmp/build a pushovat z nich, ne z mountu.
+- **Refaktoring do angličtiny (v2.1.0):** kódové struktury a názvy typů byly plně poangličtěny z důvodu mezinárodní konzistence kódu a snadnější integrace s AI vývojovými agenty, při zachování zpětné kompatibility načítání starých českých souborů.
 
 ## 📁 Stav souborů
-- `CodePlanner/Core/SpecCore.cs` – jádro: model, otázky, verzování, render MD/JSON, ukládání (v1.0: podpora dynamických otázek v modelu)
-- `CodePlanner/Core/GeminiService.cs` – AI integrace (v1.0: dynamic question generator prompt + dynamic result deserialization)
-- `CodePlanner/Core/HlasovyVstup.cs` – P/Invoke nahrávání zvuku z mikrofonu (winmm.dll)
-- `CodePlanner/MainForm.cs` – celé GUI (v1.0: dynamické plnění ComboBoxu, ukládání, načítání a rendering specifických otázek)
+- `CodePlanner/Core/SpecCore.cs` – jádro: model, otázky, verzování, render MD/JSON, ukládání (dynamické otázky na míru v angličtině)
+- `CodePlanner/Core/GeminiService.cs` – AI integrace (deserializace, strukturované výstupy v angličtině)
+- `CodePlanner/Core/VoiceRecorder.cs` – P/Invoke nahrávání zvuku z mikrofonu (winmm.dll)
+- `CodePlanner/DesignSystem.cs` – barvy a písma pro UI chránící před GDI leakem
+- `CodePlanner/ProjectTypeComboItem.cs` – model položek ComboBoxu pro výběr šablony
+- `CodePlanner/MainForm.cs` – celé GUI poangličtěné a propojené s design systémem
 - `CodePlanner/SettingsForm.cs` – nastavení Gemini API
 - `CodePlanner/Program.cs` – vstupní bod
-- `CodePlanner/CodePlanner.csproj` – konfigurace buildu (nastavena ikona icon.ico)
-- `CoreTests/` – automatické testy jádra (102 kontrol pro v1.0)
+- `CodePlanner/CodePlanner.csproj` – konfigurace buildu
+- `CoreTests/` – automatické testy jádra (174 kontrol pro v2.1.0, testovány nové konzistenční kontroly)
 - `PodepsatAplikaci.ps1` – utilita pro lokální podepisování exe k obcházení SmartScreen
-- `CodePlanner_v1.0_Windows.zip` – hotová aplikace v1.0 + návod CTI_ME.txt
+- `CodePlanner-v2.1.0.zip` – finální hotová aplikace v2.1.0 + návod CTI_ME.txt

@@ -10,10 +10,10 @@ namespace CodePlanner
 {
     public class MetrikyForm : Form
     {
-        private readonly ProjektMetriky _metriky;
+        private readonly ProjectMetrics _metrics;
         private readonly string _apiKey;
         private readonly string _model;
-        private readonly SpecProjekt _projekt;
+        private readonly ProjectSpecification _project;
         private readonly Action _onZmena;
 
         private Label lblCasOdhaduVal;
@@ -27,15 +27,15 @@ namespace CodePlanner
         private Button btnCopy;
         private CancellationTokenSource _cts = null;
 
-        public MetrikyForm(ProjektMetriky metriky, string apiKey, string model, SpecProjekt projekt, Action onZmena)
+        public MetrikyForm(ProjectMetrics metrics, string apiKey, string model, ProjectSpecification project, Action onZmena)
         {
-            _metriky = metriky;
+            _metrics = metrics;
             _apiKey = apiKey;
             _model = model;
-            _projekt = projekt;
+            _project = project;
             _onZmena = onZmena;
 
-            Text = "Metriky and odhad projektu";
+            Text = "Metriky a odhad projektu";
             Size = new Size(820, 580);
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
@@ -44,7 +44,9 @@ namespace CodePlanner
             ShowInTaskbar = false;
             MinimizeBox = false;
             MaximizeBox = true;
-            Font = new Font("Segoe UI", 9.5f);
+            Font = DesignSystem.Body;
+            BackColor = DesignSystem.SvetlePozadi;
+            ForeColor = DesignSystem.Navy;
 
             // Esc closes the form
             this.KeyPreview = true;
@@ -65,13 +67,13 @@ namespace CodePlanner
             var pnlHeader = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(16, 35, 63) // Navy
+                BackColor = DesignSystem.Navy
             };
             var lblTitle = new Label
             {
                 Text = "📊 AI Odhad a projektové metriky",
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI Semibold", 12f, FontStyle.Bold),
+                Font = DesignSystem.HeaderMedium,
                 Dock = DockStyle.Left,
                 Width = 400,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -98,7 +100,6 @@ namespace CodePlanner
                 BackColor = Color.FromArgb(245, 247, 250)
             };
 
-            // Scale is 1.0f because AutoScaleMode.Dpi handles UI scaling automatically in .NET Core (I1)
             float scale = 1.0f;
             int cardHeight = (int)(65 * scale);
             pnlLeft.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
@@ -121,16 +122,16 @@ namespace CodePlanner
                 var lblName = new Label
                 {
                     Text = label,
-                    ForeColor = Color.DimGray,
-                    Font = new Font("Segoe UI", 8.5f * scale, FontStyle.Bold),
+                    ForeColor = DesignSystem.SedaText,
+                    Font = DesignSystem.SmallBold,
                     Dock = DockStyle.Top,
                     Height = (int)(18 * scale)
                 };
 
                 valLabel = new Label
                 {
-                    ForeColor = Color.FromArgb(16, 35, 63),
-                    Font = new Font("Segoe UI Semibold", 11f * scale, FontStyle.Bold),
+                    ForeColor = DesignSystem.Navy,
+                    Font = DesignSystem.BodyBold,
                     Dock = DockStyle.Fill,
                     TextAlign = ContentAlignment.MiddleLeft
                 };
@@ -150,7 +151,8 @@ namespace CodePlanner
             // PRAVÝ PANEL: technický rozbor a rizika
             var tabContent = new TabControl
             {
-                Dock = DockStyle.Fill
+                Dock = DockStyle.Fill,
+                Font = DesignSystem.Body
             };
 
             var tabRozbor = new TabPage("🔧 Technický rozbor a architektura");
@@ -160,7 +162,7 @@ namespace CodePlanner
                 ReadOnly = true,
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.75f),
+                Font = DesignSystem.Body,
                 Padding = new Padding(8)
             };
             tabRozbor.Controls.Add(rtbRozbor);
@@ -172,7 +174,7 @@ namespace CodePlanner
                 ReadOnly = true,
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.75f),
+                Font = DesignSystem.Body,
                 Padding = new Padding(8)
             };
             tabRizika.Controls.Add(rtbRizika);
@@ -195,8 +197,8 @@ namespace CodePlanner
                 Dock = DockStyle.Left,
                 Width = 350,
                 TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Color.DimGray,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Italic)
+                ForeColor = DesignSystem.SedaText,
+                Font = DesignSystem.BodyItalic
             };
 
             btnAiMetriky = new Button
@@ -205,10 +207,10 @@ namespace CodePlanner
                 Width = 200,
                 Dock = DockStyle.Right,
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(16, 35, 63), // Navy
+                BackColor = DesignSystem.Navy,
                 ForeColor = Color.White,
                 Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold)
+                Font = DesignSystem.BodyBold
             };
             btnAiMetriky.FlatAppearance.BorderSize = 0;
             btnAiMetriky.Click += BtnAiMetriky_Click;
@@ -219,9 +221,10 @@ namespace CodePlanner
                 Width = 140,
                 Dock = DockStyle.Right,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Color.FromArgb(16, 35, 63),
+                ForeColor = DesignSystem.Navy,
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0, 0, 6, 0)
+                Margin = new Padding(0, 0, 6, 0),
+                Font = DesignSystem.Body
             };
             btnCopy.FlatAppearance.BorderColor = Color.Silver;
             btnCopy.Click += BtnCopy_Click;
@@ -243,22 +246,11 @@ namespace CodePlanner
             }
 
             NaplnMetriky();
-
-            this.FormClosing += (s, e) =>
-            {
-                this.Font?.Dispose();
-                lblTitle?.Font?.Dispose();
-                rtbRozbor?.Font?.Dispose();
-                rtbRizika?.Font?.Dispose();
-                lblStatus?.Font?.Dispose();
-                btnAiMetriky?.Font?.Dispose();
-                btnCopy?.Font?.Dispose();
-            };
         }
 
         private void NaplnMetriky()
         {
-            if (_metriky == null || _metriky.CasVypoctu == default)
+            if (_metrics == null || _metrics.CalculationTimestamp == default)
             {
                 lblCasOdhaduVal.Text = "Zatím nespočítáno";
                 lblKomplexitaVal.Text = "Zatím nespočítáno";
@@ -272,26 +264,26 @@ namespace CodePlanner
             }
 
             btnCopy.Enabled = true;
-            lblCasOdhaduVal.Text = $"{_metriky.CasovyOdhadMin} až {_metriky.CasovyOdhadMax}";
-            lblKomplexitaVal.Text = _metriky.Komplexita;
+            lblCasOdhaduVal.Text = $"{_metrics.TimeEstimateMin} až {_metrics.TimeEstimateMax}";
+            lblKomplexitaVal.Text = _metrics.Complexity;
             
             // Barevné odlišení komplexity
-            if (_metriky.Komplexita.Contains("Vysoká"))
-                lblKomplexitaVal.ForeColor = Color.Crimson;
-            else if (_metriky.Komplexita.Contains("Střední"))
-                lblKomplexitaVal.ForeColor = Color.DarkGoldenrod;
+            if (_metrics.Complexity.Contains("Vysoká"))
+                lblKomplexitaVal.ForeColor = DesignSystem.Cervena;
+            else if (_metrics.Complexity.Contains("Střední"))
+                lblKomplexitaVal.ForeColor = DesignSystem.Oranzova;
             else
-                lblKomplexitaVal.ForeColor = Color.Green;
+                lblKomplexitaVal.ForeColor = DesignSystem.Zelena;
 
-            lblRozpocetVal.Text = _metriky.DoporucenyRozpocet;
-            lblSlozeniVal.Text = _metriky.SlozeniTymu;
+            lblRozpocetVal.Text = _metrics.RecommendedBudget;
+            lblSlozeniVal.Text = _metrics.TeamComposition;
 
-            rtbRozbor.Text = _metriky.TechnickyRozbor;
+            rtbRozbor.Text = _metrics.TechnicalAnalysis;
             
             rtbRizika.Clear();
-            if (_metriky.RizikaMetriky != null && _metriky.RizikaMetriky.Count > 0)
+            if (_metrics.MetricRisks != null && _metrics.MetricRisks.Count > 0)
             {
-                foreach (var r in _metriky.RizikaMetriky)
+                foreach (var r in _metrics.MetricRisks)
                 {
                     rtbRizika.AppendText($"• {r}\n\n");
                 }
@@ -301,7 +293,7 @@ namespace CodePlanner
                 rtbRizika.Text = "Nebyly definovány žádné specifické hrozby.";
             }
 
-            lblStatus.Text = $"Odhad aktualizován: {_metriky.CasVypoctu:d. M. yyyy v H:mm}";
+            lblStatus.Text = $"Odhad aktualizován: {_metrics.CalculationTimestamp:d. M. yyyy v H:mm}";
         }
 
         private async void BtnAiMetriky_Click(object sender, EventArgs e)
@@ -320,23 +312,23 @@ namespace CodePlanner
 
             try
             {
-                var noveMetriky = await GeminiService.GenerujMetrikyAsync(_apiKey, _model, _projekt, _cts.Token);
+                var noveMetriky = await GeminiService.GenerateMetricsAsync(_apiKey, _model, _project, _cts.Token);
                 if (this.IsDisposed || !this.Created) return;
                 
-                _metriky.CasovyOdhadMin = noveMetriky.CasovyOdhadMin;
-                _metriky.CasovyOdhadMax = noveMetriky.CasovyOdhadMax;
-                _metriky.Komplexita = noveMetriky.Komplexita;
-                _metriky.DoporucenyRozpocet = noveMetriky.DoporucenyRozpocet;
-                _metriky.SlozeniTymu = noveMetriky.SlozeniTymu;
-                _metriky.TechnickyRozbor = noveMetriky.TechnickyRozbor;
-                _metriky.RizikaMetriky = noveMetriky.RizikaMetriky;
-                _metriky.CasVypoctu = DateTime.Now;
+                _metrics.TimeEstimateMin = noveMetriky.TimeEstimateMin;
+                _metrics.TimeEstimateMax = noveMetriky.TimeEstimateMax;
+                _metrics.Complexity = noveMetriky.Complexity;
+                _metrics.RecommendedBudget = noveMetriky.RecommendedBudget;
+                _metrics.TeamComposition = noveMetriky.TeamComposition;
+                _metrics.TechnicalAnalysis = noveMetriky.TechnicalAnalysis;
+                _metrics.MetricRisks = noveMetriky.MetricRisks;
+                _metrics.CalculationTimestamp = DateTime.Now;
 
-                _projekt.Log.Add(new Rozhodnuti
+                _project.ChangeLog.Add(new DecisionLogEntry
                 {
-                    Cas = DateTime.Now,
-                    Akce = "Projektové metriky",
-                    Detail = $"AI odhad pracnosti: {_metriky.CasovyOdhadMin} až {_metriky.CasovyOdhadMax} (komplexita: {_metriky.Komplexita})."
+                    Timestamp = DateTime.Now,
+                    Action = "Projektové metriky",
+                    Detail = $"AI odhad pracnosti: {_metrics.TimeEstimateMin} až {_metrics.TimeEstimateMax} (komplexita: {_metrics.Complexity})."
                 });
 
                 _onZmena();
@@ -371,17 +363,17 @@ namespace CodePlanner
         {
             var sb = new StringBuilder();
             sb.AppendLine("=== METRIKY A ODHAD PROJEKTU ===");
-            sb.AppendLine($"Projekt: {_projekt.Nazev}");
-            sb.AppendLine($"Odhad času: {_metriky.CasovyOdhadMin} až {_metriky.CasovyOdhadMax}");
-            sb.AppendLine($"Složitost: {_metriky.Komplexita}");
-            sb.AppendLine($"Doporučený rozpočet: {_metriky.DoporucenyRozpocet}");
-            sb.AppendLine($"Doporučené složení týmu: {_metriky.SlozeniTymu}");
+            sb.AppendLine($"Projekt: {_project.Name}");
+            sb.AppendLine($"Odhad času: {_metrics.TimeEstimateMin} až {_metrics.TimeEstimateMax}");
+            sb.AppendLine($"Složitost: {_metrics.Complexity}");
+            sb.AppendLine($"Doporučený rozpočet: {_metrics.RecommendedBudget}");
+            sb.AppendLine($"Doporučené složení týmu: {_metrics.TeamComposition}");
             sb.AppendLine();
             sb.AppendLine("--- Technický rozbor ---");
-            sb.AppendLine(_metriky.TechnickyRozbor);
+            sb.AppendLine(_metrics.TechnicalAnalysis);
             sb.AppendLine();
             sb.AppendLine("--- Odhadovaná rizika ---");
-            foreach (var r in _metriky.RizikaMetriky)
+            foreach (var r in _metrics.MetricRisks)
             {
                 sb.AppendLine($"- {r}");
             }

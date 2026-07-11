@@ -21,34 +21,34 @@ internal static class Testy
         Console.WriteLine("== Testy jádra CodePlanner ==");
 
         // --- základní stav ---
-        var p = new SpecProjekt { Nazev = "Hotelová evidence" };
-        Over(Otazky.Vse.Count == 10, "sada má 10 řízených otázek");
-        Over(Otazky.Vse.Take(7).All(o => o.Dopad == Dopad.Vysoky), "prvních 7 otázek má vysoký dopad (question planner)");
-        Over(SpecSluzba.DalsiNezodpovezena(p).Id == "cil-problem", "první otázka je cíl/problém");
+        var p = new ProjectSpecification { Name = "Hotelová evidence" };
+        Over(StandardQuestions.All.Count == 11, "sada má 11 řízených otázek");
+        Over(StandardQuestions.All.Count(o => o.Impact == Impact.High) == 6, "sada má 6 otázek s vysokým dopadem");
+        Over(SpecificationService.GetNextUnansweredQuestion(p).Id == "cil-problem", "první otázka je cíl/problém");
 
         // --- nápad ---
-        SpecSluzba.NastavNapad(p, "Udělej mi aplikaci na počítání hostů v hotelu.\nPotřebuju ji i bez internetu.");
-        Over(p.Verze == 2, "úprava nápadu zvýšila verzi specifikace");
-        Over(p.Log.Any(l => l.Akce == "Nápad"), "úprava nápadu je v logu");
+        SpecificationService.SetIdea(p, "Udělej mi aplikaci na počítání hostů v hotelu.\nPotřebuju ji i bez internetu.");
+        Over(p.Version == 2, "úprava nápadu zvýšila verzi specifikace");
+        Over(p.ChangeLog.Any(l => l.Action == "Nápad"), "úprava nápadu je v logu");
 
         // --- odpovědi a předpoklady ---
-        SpecSluzba.Odpovez(p, "cil-problem", "Recepce ztrácí přehled o počtu hostů; appka dá rychlý denní přehled.");
-        SpecSluzba.Odpovez(p, "tech-platforma", "Windows počítač na recepci.");
-        SpecSluzba.PouzijPredpoklad(p, "rozsah-nongoals");
-        Over(SpecSluzba.PocetZodpovezenych(p) == 2, "2 skutečné odpovědi");
-        Over(SpecSluzba.PocetPredpokladu(p) == 1, "1 označený předpoklad");
-        Over(SpecSluzba.OtevreneOtazky(p).Count == 7, "7 otázek zůstává otevřených");
-        Over(p.Verze == 5, "každé rozhodnutí zvyšuje verzi (2+3=5)");
+        SpecificationService.AnswerQuestion(p, "cil-problem", "Recepce ztrácí přehled o počtu hostů; appka dá rychlý denní přehled.");
+        SpecificationService.AnswerQuestion(p, "tech-platforma", "Windows počítač na recepci.");
+        SpecificationService.UseAssumption(p, "rozsah-nongoals");
+        Over(SpecificationService.GetAnsweredCount(p) == 2, "2 skutečné odpovědi");
+        Over(SpecificationService.GetAssumptionsCount(p) == 1, "1 označený předpoklad");
+        Over(SpecificationService.GetOpenQuestions(p).Count == 8, "8 otázek zůstává otevřených");
+        Over(p.Version == 5, "každé rozhodnutí zvyšuje verzi (2+3=5)");
 
         // --- přepsání odpovědi ---
-        SpecSluzba.Odpovez(p, "tech-platforma", "Windows počítač na recepci + později tablet.");
-        Over(SpecSluzba.PocetZodpovezenych(p) == 2, "přepsání odpovědi neduplikuje záznam");
-        Over(p.Log.Any(l => l.Akce == "Změna odpovědi"), "přepsání odpovědi je v logu jako změna");
+        SpecificationService.AnswerQuestion(p, "tech-platforma", "Windows počítač na recepci + později tablet.");
+        Over(SpecificationService.GetAnsweredCount(p) == 2, "přepsání odpovědi neduplikuje záznam");
+        Over(p.ChangeLog.Any(l => l.Action == "Změna odpovědi"), "přepsání odpovědi je v logu jako změna");
 
         // --- Markdown ---
-        var md = SpecSluzba.RenderMarkdown(p);
+        var md = SpecificationService.RenderMarkdown(p);
         Over(md.Contains("# Specifikace: Hotelová evidence"), "MD: nadpis s názvem projektu");
-        foreach (var s in SpecSluzba.PoradiSekci)
+        foreach (var s in SpecificationService.SectionOrder)
             Over(md.Contains("## " + s), "MD: obsahuje sekci " + s);
         Over(md.Contains("[PŘEDPOKLAD]"), "MD: předpoklad je viditelně označen");
         Over(md.Contains("> Udělej mi aplikaci"), "MD: původní nápad je citován");
@@ -56,101 +56,102 @@ internal static class Testy
         Over(md.Contains("## Log rozhodnutí"), "MD: log rozhodnutí");
 
         // --- JSON ---
-        var json = SpecSluzba.RenderJson(p);
+        var json = SpecificationService.RenderJson(p);
         using (var doc = JsonDocument.Parse(json))
         {
             var root = doc.RootElement;
-            Over(root.GetProperty("projekt").GetString() == "Hotelová evidence", "JSON: název projektu");
-            Over(root.GetProperty("sekce").GetArrayLength() == 7, "JSON: 7 sekcí");
-            Over(root.GetProperty("otevreneOtazky").GetArrayLength() == 7, "JSON: 7 otevřených otázek");
-            Over(root.GetProperty("logRozhodnuti").GetArrayLength() == p.Log.Count, "JSON: kompletní log");
-            var technika = root.GetProperty("sekce").EnumerateArray()
-                .First(s => s.GetProperty("nazev").GetString() == "Technika");
-            Over(technika.GetProperty("polozky").GetArrayLength() == 1, "JSON: Technika má 1 položku");
+            Over(root.GetProperty("project").GetString() == "Hotelová evidence", "JSON: název projektu");
+            Over(root.GetProperty("sections").GetArrayLength() == 7, "JSON: 7 sekcí");
+            Over(root.GetProperty("openQuestions").GetArrayLength() == 8, "JSON: 8 otevřených otázek");
+            Over(root.GetProperty("decisionLog").GetArrayLength() == p.ChangeLog.Count, "JSON: kompletní log");
+            var technika = root.GetProperty("sections").EnumerateArray()
+                .First(s => s.GetProperty("name").GetString() == "Technika");
+            Over(technika.GetProperty("items").GetArrayLength() == 1, "JSON: Technika má 1 položku");
             Over(json.Contains("Hotelová"), "JSON: česká diakritika není escapovaná");
         }
 
         // --- uložení a načtení projektu ---
         string tmp = Path.Combine(Path.GetTempPath(), "test_projekt.vcbrief");
-        SpecSluzba.UlozProjekt(p, tmp);
-        var p2 = SpecSluzba.NactiProjekt(tmp);
-        Over(p2.Nazev == p.Nazev, "roundtrip: název sedí");
-        Over(p2.Odpovedi.Count == p.Odpovedi.Count, "roundtrip: počet odpovědí sedí");
-        Over(p2.Log.Count == p.Log.Count, "roundtrip: log sedí");
-        Over(p2.Verze == p.Verze, "roundtrip: verze sedí");
-        Over(SpecSluzba.RenderMarkdown(p2).Contains("[PŘEDPOKLAD]"), "roundtrip: render funguje i po načtení");
+        SpecificationService.SaveProject(p, tmp);
+        var p2 = SpecificationService.LoadProject(tmp);
+        Over(p2.Name == p.Name, "roundtrip: název sedí");
+        Over(p2.Answers.Count == p.Answers.Count, "roundtrip: počet odpovědí sedí");
+        Over(p2.ChangeLog.Count == p.ChangeLog.Count, "roundtrip: log sedí");
+        Over(p2.Version == p.Version, "roundtrip: verze sedí");
+        Over(SpecificationService.RenderMarkdown(p2).Contains("[PŘEDPOKLAD]"), "roundtrip: render funguje i po načtení");
         File.Delete(tmp);
 
         // --- prázdný projekt se vyrenderuje bez chyby ---
-        var prazdny = new SpecProjekt();
-        var mdPrazdny = SpecSluzba.RenderMarkdown(prazdny);
+        var prazdny = new ProjectSpecification();
+        var mdPrazdny = SpecificationService.RenderMarkdown(prazdny);
         Over(mdPrazdny.Contains("(nepojmenovaný projekt)"), "prázdný projekt: bezpečný nadpis");
         Over(mdPrazdny.Contains("(zatím nezadán"), "prázdný projekt: výzva k zadání nápadu");
-        SpecSluzba.RenderJson(prazdny);
+        SpecificationService.RenderJson(prazdny);
 
         // --- kontrola konzistence ---
-        var cisty = new SpecProjekt { Napad = "Jednoduchá kalkulačka." };
-        SpecSluzba.Odpovez(cisty, "tech-offline", "Plně offline.");
-        Over(KonzistencniKontrola.Zkontroluj(cisty).Count == 0, "kontrola: čistý projekt bez nálezů");
+        var cisty = new ProjectSpecification { Idea = "Jednoduchá kalkulačka." };
+        SpecificationService.AnswerQuestion(cisty, "tech-offline", "Plně offline.");
+        Over(ConsistencyChecker.Check(cisty).Count == 0, "kontrola: čistý projekt bez nálezů");
 
-        var k1 = new SpecProjekt { Napad = "Appka se synchronizací do cloudu mezi zařízeními." };
-        SpecSluzba.Odpovez(k1, "tech-offline", "Musí fungovat plně offline.");
-        var n1 = KonzistencniKontrola.Zkontroluj(k1);
-        Over(n1.Any(n => n.Titulek == "Offline vs. online" && n.Zavaznost == Zavaznost.Rozpor), "kontrola: offline×cloud je rozpor");
+        var k1 = new ProjectSpecification { Idea = "Appka se synchronizací do cloudu mezi zařízeními." };
+        SpecificationService.AnswerQuestion(k1, "tech-offline", "Musí fungovat plně offline.");
+        var n1 = ConsistencyChecker.Check(k1);
+        Over(n1.Any(n => n.Title == "Offline vs. online" && n.Severity == Severity.Conflict), "kontrola: offline×cloud je rozpor");
 
-        var k2 = new SpecProjekt { Napad = "Evidence hostů: jméno a email každého hosta." };
-        SpecSluzba.Odpovez(k2, "data-obsah", "Jen neosobní provozní data, bez osobních údajů.");
-        Over(KonzistencniKontrola.Zkontroluj(k2).Any(n => n.Titulek == "Osobní údaje"), "kontrola: osobní údaje×bez osobních je rozpor");
+        var k2 = new ProjectSpecification { Idea = "Evidence hostů: jméno a email každého hosta." };
+        SpecificationService.AnswerQuestion(k2, "data-obsah", "Jen neosobní provozní data, bez osobních údajů.");
+        Over(ConsistencyChecker.Check(k2).Any(n => n.Title == "Osobní údaje"), "kontrola: osobní údaje×bez osobních je rozpor");
 
-        var k3 = new SpecProjekt { Napad = "Program na skladovou evidenci." };
-        SpecSluzba.Odpovez(k3, "rozsah-nongoals", "tisk sestav, statistiky prodeje");
-        SpecSluzba.Odpovez(k3, "ux-obrazovky", "Hlavní obrazovka se seznamem, detail položky, tisk sestav na konci měsíce.");
-        Over(KonzistencniKontrola.Zkontroluj(k3).Any(n => n.Titulek == "Non-goal se objevuje jinde"), "kontrola: non-goal zmíněný v UX je varování");
+        var k3 = new ProjectSpecification { Idea = "Program na skladovou evidenci." };
+        SpecificationService.AnswerQuestion(k3, "rozsah-nongoals", "tisk sestav, statistiky prodeje");
+        SpecificationService.AnswerQuestion(k3, "ux-styl", "Hlavní obrazovka se seznamem, detail položky, tisk sestav na konci měsíce.");
+        Over(ConsistencyChecker.Check(k3).Any(n => n.Title == "Non-goal popsán jako cíl"), "kontrola: non-goal zmíněný v UX je varování");
 
-        var k4 = new SpecProjekt();
-        SpecSluzba.Odpovez(k4, "akceptace", "funguje");
-        Over(KonzistencniKontrola.Zkontroluj(k4).Any(n => n.Titulek == "Akceptace je moc stručná"), "kontrola: vágní akceptace je varování");
+        var k4 = new ProjectSpecification();
+        SpecificationService.AnswerQuestion(k4, "akceptace", "Až budou splněny všechny body specifikace.");
+        Over(ConsistencyChecker.Check(k4).Any(n => n.Title == "Vágní akceptační kritéria"), "kontrola: vágní akceptace je varování");
 
-        var k5 = new SpecProjekt { Napad = "Chci export do CSV pro účetní." };
-        SpecSluzba.PouzijPredpoklad(k5, "data-export");
-        Over(KonzistencniKontrola.Zkontroluj(k5).Any(n => n.Titulek == "Export ano, nebo ne?"), "kontrola: export v nápadu × bez exportu je rozpor");
+        var k5 = new ProjectSpecification { Idea = "Chci export do CSV pro účetní." };
+        SpecificationService.UseAssumption(k5, "data-export");
+        Over(ConsistencyChecker.Check(k5).Any(n => n.Title == "Export dat vs. žádný export"), "kontrola: export v nápadu × bez exportu je rozpor");
 
-        var k6 = new SpecProjekt();
-        SpecSluzba.PouzijPredpoklad(k6, "cil-problem");
-        SpecSluzba.PouzijPredpoklad(k6, "cil-uzivatele");
-        SpecSluzba.PouzijPredpoklad(k6, "tech-platforma");
-        var n6 = KonzistencniKontrola.Zkontroluj(k6);
-        Over(n6.Any(n => n.Titulek == "Hodně předpokladů s vysokým dopadem"), "kontrola: 3 předpoklady s vysokým dopadem jsou varování");
-        Over(n6.Any(n => n.Titulek == "Chybí původní nápad"), "kontrola: prázdný nápad + odpovědi je varování");
+        var k6 = new ProjectSpecification();
+        SpecificationService.UseAssumption(k6, "cil-problem");
+        SpecificationService.UseAssumption(k6, "cil-uzivatele");
+        SpecificationService.UseAssumption(k6, "tech-platforma");
+        SpecificationService.AnswerQuestion(k6, "rozsah-funkce", "Chci nějaké základní skladové funkce.");
+        var n6 = ConsistencyChecker.Check(k6);
+        Over(n6.Any(n => n.Title.StartsWith("Vysoký počet předpokladů")), "kontrola: 3 předpoklady s vysokým dopadem jsou varování");
+        Over(n6.Any(n => n.Title == "Prázdný původní nápad"), "kontrola: prázdný nápad + odpovědi je varování");
 
-        Over(SpecSluzba.RenderMarkdown(k1).Contains("## Kontrola konzistence"), "MD: sekce kontroly konzistence při nálezech");
-        Over(!SpecSluzba.RenderMarkdown(cisty).Contains("## Kontrola konzistence"), "MD: sekce kontroly chybí bez nálezů");
-        using (var docK = JsonDocument.Parse(SpecSluzba.RenderJson(k1)))
-            Over(docK.RootElement.GetProperty("kontrolaKonzistence").GetArrayLength() >= 1, "JSON: pole kontrolaKonzistence");
+        Over(SpecificationService.RenderMarkdown(k1).Contains("## Kontrola konzistence"), "MD: sekce kontroly konzistence při nálezech");
+        Over(!SpecificationService.RenderMarkdown(cisty).Contains("## Kontrola konzistence"), "MD: sekce kontroly chybí bez nálezů");
+        using (var docK = JsonDocument.Parse(SpecificationService.RenderJson(k1)))
+            Over(docK.RootElement.GetProperty("consistencyCheck").GetArrayLength() >= 1, "JSON: pole kontrolaKonzistence");
 
-        var kSqliteWeb = new SpecProjekt();
-        SpecSluzba.Odpovez(kSqliteWeb, "tech-platforma", "Funguje to ve webovém prohlížeči.");
-        SpecSluzba.Odpovez(kSqliteWeb, "data-obsah", "Uložíme to do SQLite databáze.");
-        Over(KonzistencniKontrola.Zkontroluj(kSqliteWeb).Any(n => n.Titulek == "SQLite databáze na webu"), "kontrola: SQLite na webu je varování");
+        var kSqliteWeb = new ProjectSpecification();
+        SpecificationService.AnswerQuestion(kSqliteWeb, "tech-platforma", "Funguje to ve webovém prohlížeči.");
+        SpecificationService.AnswerQuestion(kSqliteWeb, "data-obsah", "Uložíme to do SQLite databáze.");
+        Over(ConsistencyChecker.Check(kSqliteWeb).Any(n => n.Title == "SQLite databáze na webu"), "kontrola: SQLite na webu je varování");
 
-        var kAuth = new SpecProjekt();
-        SpecSluzba.Odpovez(kAuth, "cil-uzivatele", "Bude tam administrátor a běžný host.");
-        SpecSluzba.Odpovez(kAuth, "tech-platforma", "Pouze desktop.");
-        SpecSluzba.Odpovez(kAuth, "data-obsah", "Data budeme ukládat lokálně do souborů.");
-        Over(KonzistencniKontrola.Zkontroluj(kAuth).Any(n => n.Titulek == "Uživatelské role bez přihlašování"), "kontrola: role bez auth je varování");
+        var kAuth = new ProjectSpecification();
+        SpecificationService.AnswerQuestion(kAuth, "cil-uzivatele", "Bude tam administrátor a běžný host.");
+        SpecificationService.AnswerQuestion(kAuth, "tech-platforma", "Pouze desktop.");
+        SpecificationService.AnswerQuestion(kAuth, "data-obsah", "Data budeme ukládat lokálně do souborů.");
+        Over(ConsistencyChecker.Check(kAuth).Any(n => n.Title == "Uživatelské role bez přihlašování"), "kontrola: role bez auth je varování");
 
         // --- šablony otázek ---
-        var pSablony = new SpecProjekt { Nazev = "Test šablon" };
-        Over(pSablony.TypProjektu == TypProjektu.Obecna, "výchozí typ projektu je Obecna");
-        SpecSluzba.PouzijPredpoklad(pSablony, "cil-problem");
-        var odpObecna = SpecSluzba.OdpovedNa(pSablony, "cil-problem");
-        Over(odpObecna.Text == Otazky.Podle("cil-problem").GetVychoziPredpoklad(TypProjektu.Obecna), "předpoklad odpovídá obecnému typu");
+        var pSablony = new ProjectSpecification { Name = "Test šablon" };
+        Over(pSablony.ProjectType == ProjectType.General, "výchozí typ projektu je Obecna");
+        SpecificationService.UseAssumption(pSablony, "cil-problem");
+        var odpObecna = SpecificationService.GetAnswerFor(pSablony, "cil-problem");
+        Over(odpObecna.Text == StandardQuestions.Under(pSablony, "cil-problem").GetDefaultAssumption(ProjectType.General), "předpoklad odpovídá obecnému typu");
 
-        SpecSluzba.ZmenTypProjektu(pSablony, TypProjektu.Hra);
-        Over(pSablony.TypProjektu == TypProjektu.Hra, "změna typu projektu na Hra");
-        var odpHra = SpecSluzba.OdpovedNa(pSablony, "cil-problem");
-        Over(odpHra.Text == Otazky.Podle("cil-problem").GetVychoziPredpoklad(TypProjektu.Hra), "předpoklad se zaktualizoval na Hra");
-        Over(pSablony.Log.Any(l => l.Akce == "Typ projektu" && l.Detail.Contains("Změna typu projektu")), "záznam o změně typu v logu");
+        SpecificationService.ChangeProjectType(pSablony, ProjectType.Game);
+        Over(pSablony.ProjectType == ProjectType.Game, "změna typu projektu na Hra");
+        var odpHra = SpecificationService.GetAnswerFor(pSablony, "cil-problem");
+        Over(odpHra.Text == StandardQuestions.Under(pSablony, "cil-problem").GetDefaultAssumption(ProjectType.Game), "předpoklad se zaktualizoval na Hra");
+        Over(pSablony.ChangeLog.Any(l => l.Action == "Typ projektu" && l.Detail.Contains("Změna typu projektu")), "záznam o změně typu v logu");
 
         // --- Gemini nastavení a prompt testy ---
         string tmpSettings = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CodePlanner", "settings.json");
@@ -162,55 +163,55 @@ internal static class Testy
 
         try
         {
-            var settings = new GeminiNastaveni
+            var settings = new GeminiSettings
             {
                 GeminiApiKey = "test-key-12345",
                 GeminiModel = "gemini-2.5-flash"
             };
-            settings.Uloz();
+            settings.Save();
 
-            var loaded = GeminiNastaveni.Nacti();
+            var loaded = GeminiSettings.Load();
             Over(loaded.GeminiApiKey == "test-key-12345", "nastavení: načtení API klíče funguje");
             Over(loaded.GeminiModel == "gemini-2.5-flash", "nastavení: načtení modelu funguje");
-            Over(loaded.EfektivniApiKey == "test-key-12345", "nastavení: efektivní klíč vrací hodnotu z nastavení");
+            Over(loaded.EffectiveApiKey == "test-key-12345", "nastavení: efektivní klíč vrací hodnotu z nastavení");
 
             Environment.SetEnvironmentVariable("GEMINI_API_KEY", "env-key-999");
             loaded.GeminiApiKey = "";
-            Over(loaded.EfektivniApiKey == "env-key-999", "nastavení: fallback na proměnnou prostředí funguje");
+            Over(loaded.EffectiveApiKey == "env-key-999", "nastavení: fallback na proměnnou prostředí funguje");
             Environment.SetEnvironmentVariable("GEMINI_API_KEY", null);
 
             // --- Testy historie nedávných projektů (v0.8) ---
-            var settingsRef = new GeminiNastaveni();
-            Over(settingsRef.NedavneProjekty != null, "nastavení: nedávné projekty nejsou null po inicializaci");
+            var settingsRef = new GeminiSettings();
+            Over(settingsRef.RecentProjects != null, "nastavení: nedávné projekty nejsou null po inicializaci");
 
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\a.vcbrief");
-            Over(settingsRef.NedavneProjekty.Count == 1, "nedávné: počet položek je 1");
-            Over(settingsRef.NedavneProjekty[0] == "c:\\projekty\\a.vcbrief", "nedávné: nová položka je na začátku");
+            settingsRef.AddRecentProject("c:\\projekty\\a.vcbrief");
+            Over(settingsRef.RecentProjects.Count == 1, "nedávné: počet položek je 1");
+            Over(settingsRef.RecentProjects[0] == "c:\\projekty\\a.vcbrief", "nedávné: nová položka je na začátku");
 
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\b.vcbrief");
-            Over(settingsRef.NedavneProjekty.Count == 2, "nedávné: počet položek je 2");
-            Over(settingsRef.NedavneProjekty[0] == "c:\\projekty\\b.vcbrief", "nedávné: druhá přidaná položka je na začátku");
-            Over(settingsRef.NedavneProjekty[1] == "c:\\projekty\\a.vcbrief", "nedávné: první položka se posunula");
+            settingsRef.AddRecentProject("c:\\projekty\\b.vcbrief");
+            Over(settingsRef.RecentProjects.Count == 2, "nedávné: počet položek je 2");
+            Over(settingsRef.RecentProjects[0] == "c:\\projekty\\b.vcbrief", "nedávné: druhá přidaná položka je na začátku");
+            Over(settingsRef.RecentProjects[1] == "c:\\projekty\\a.vcbrief", "nedávné: první položka se posunula");
 
             // duplicitní přidání by mělo položku přesunout na začátek
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\a.vcbrief");
-            Over(settingsRef.NedavneProjekty.Count == 2, "nedávné: duplicitní přidání nezvýšilo počet");
-            Over(settingsRef.NedavneProjekty[0] == "c:\\projekty\\a.vcbrief", "nedávné: přesunutí na začátek");
+            settingsRef.AddRecentProject("c:\\projekty\\a.vcbrief");
+            Over(settingsRef.RecentProjects.Count == 2, "nedávné: duplicitní přidání nezvýšilo počet");
+            Over(settingsRef.RecentProjects[0] == "c:\\projekty\\a.vcbrief", "nedávné: přesunutí na začátek");
 
             // naplníme více než 5 souborů
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\1.vcbrief");
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\2.vcbrief");
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\3.vcbrief");
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\4.vcbrief");
-            settingsRef.PridejNedavnyProjekt("c:\\projekty\\5.vcbrief");
-            Over(settingsRef.NedavneProjekty.Count == 5, "nedávné: maximální počet položek je 5");
-            Over(settingsRef.NedavneProjekty[0] == "c:\\projekty\\5.vcbrief", "nedávné: poslední přidaný je na indexu 0");
-            Over(!settingsRef.NedavneProjekty.Contains("c:\\projekty\\a.vcbrief"), "nedávné: nejstarší byl vytlačen");
+            settingsRef.AddRecentProject("c:\\projekty\\1.vcbrief");
+            settingsRef.AddRecentProject("c:\\projekty\\2.vcbrief");
+            settingsRef.AddRecentProject("c:\\projekty\\3.vcbrief");
+            settingsRef.AddRecentProject("c:\\projekty\\4.vcbrief");
+            settingsRef.AddRecentProject("c:\\projekty\\5.vcbrief");
+            Over(settingsRef.RecentProjects.Count == 5, "nedávné: maximální počet položek je 5");
+            Over(settingsRef.RecentProjects[0] == "c:\\projekty\\5.vcbrief", "nedávné: poslední přidaný je na indexu 0");
+            Over(!settingsRef.RecentProjects.Contains("c:\\projekty\\a.vcbrief"), "nedávné: nejstarší byl vytlačen");
 
             // odebrání položky
-            settingsRef.OdeberNedavnyProjekt("c:\\projekty\\3.vcbrief");
-            Over(settingsRef.NedavneProjekty.Count == 4, "nedávné: odebrání snížilo počet na 4");
-            Over(!settingsRef.NedavneProjekty.Contains("c:\\projekty\\3.vcbrief"), "nedávné: odebraný prvek chybí");
+            settingsRef.RemoveRecentProject("c:\\projekty\\3.vcbrief");
+            Over(settingsRef.RecentProjects.Count == 4, "nedávné: odebrání snížilo počet na 4");
+            Over(!settingsRef.RecentProjects.Contains("c:\\projekty\\3.vcbrief"), "nedávné: odebraný prvek chybí");
         }
         finally
         {
@@ -224,40 +225,40 @@ internal static class Testy
             }
         }
 
-        var prompt = GeminiService.SestavPrompt("Chci vytvořit jednoduchou kalkulačku", TypProjektu.Obecna.ToString());
+        var prompt = GeminiService.SestavPrompt("Chci vytvořit jednoduchou kalkulačku", ProjectType.General.ToString());
         Over(!string.IsNullOrWhiteSpace(prompt), "prompt: sestavení promptu vrací neprázdný text");
         Over(prompt.Contains("Chci vytvořit jednoduchou kalkulačku"), "prompt: obsahuje původní nápad");
         Over(prompt.Contains("cil-problem"), "prompt: obsahuje ID otázky");
-        Over(prompt.Contains("Výchozí předpoklad: Plně offline"), "prompt: obsahuje výchozí předpoklady");
+        Over(prompt.Contains("Výchozí předpoklad: Plně online"), "prompt: obsahuje výchozí předpoklady");
 
         // --- Testy referenčních podkladů (v0.7) ---
-        var promptSReferenci = GeminiService.SestavPrompt("Nápad", TypProjektu.Obecna.ToString(), "Toto jsou referenční specifikace.");
+        var promptSReferenci = GeminiService.SestavPrompt("Nápad", ProjectType.General.ToString(), "Toto jsou referenční specifikace.");
         Over(promptSReferenci.Contains("Toto jsou referenční specifikace."), "prompt: obsahuje referenční podklady");
 
-        var pRef = new SpecProjekt
+        var pRef = new ProjectSpecification
         {
-            Nazev = "Test reference",
-            Napad = "Nápad",
-            ReferencniText = "Dokumentace k API v1",
-            ReferencniNazev = "api.txt"
+            Name = "Test reference",
+            Idea = "Nápad",
+            ReferenceText = "Dokumentace k API v1",
+            ReferenceName = "api.txt"
         };
 
-        string mdRef = SpecSluzba.RenderMarkdown(pRef);
+        string mdRef = SpecificationService.RenderMarkdown(pRef);
         Over(mdRef.Contains("Referenční podklady (api.txt)"), "MD: obsahuje sekci referenčních podkladů");
         Over(mdRef.Contains("Dokumentace k API v1"), "MD: obsahuje text referenčních podkladů");
 
-        string jsonRef = SpecSluzba.RenderJson(pRef);
-        Over(jsonRef.Contains("\"referencniText\": \"Dokumentace k API v1\""), "JSON: obsahuje referencniText");
-        Over(jsonRef.Contains("\"referencniNazev\": \"api.txt\""), "JSON: obsahuje referencniNazev");
+        string jsonRef = SpecificationService.RenderJson(pRef);
+        Over(jsonRef.Contains("\"referenceText\": \"Dokumentace k API v1\""), "JSON: obsahuje referencniText");
+        Over(jsonRef.Contains("\"referenceName\": \"api.txt\""), "JSON: obsahuje referencniNazev");
 
         // Otestujeme uložení a načtení (roundtrip)
         string tmpCestaRef = Path.Combine(Path.GetTempPath(), "test_ref.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pRef, tmpCestaRef);
-            var nactenyRef = SpecSluzba.NactiProjekt(tmpCestaRef);
-            Over(nactenyRef.ReferencniText == "Dokumentace k API v1", "roundtrip: referencniText sedí");
-            Over(nactenyRef.ReferencniNazev == "api.txt", "roundtrip: referencniNazev sedí");
+            SpecificationService.SaveProject(pRef, tmpCestaRef);
+            var nactenyRef = SpecificationService.LoadProject(tmpCestaRef);
+            Over(nactenyRef.ReferenceText == "Dokumentace k API v1", "roundtrip: referencniText sedí");
+            Over(nactenyRef.ReferenceName == "api.txt", "roundtrip: referencniNazev sedí");
         }
         finally
         {
@@ -265,106 +266,106 @@ internal static class Testy
         }
 
         // --- Testy vlastních šablon (v0.9) ---
-        var customSablona = new SablonaProjektu
+        var customSablona = new ProjectTemplate
         {
-            Klic = "discord-bot",
-            Nazev = "Discord Bot",
-            Otazky = new List<SablonaOtazka>
+            Key = "discord-bot",
+            Name = "Discord Bot",
+            Questions = new List<TemplateQuestion>
             {
-                new SablonaOtazka
+                new TemplateQuestion
                 {
                     Id = "cil-problem",
                     Text = "Jaké příkazy má Discord bot umět?",
-                    Napoveda = "Nápověda k botovi.",
-                    VychoziPredpoklad = "Základní příkazy."
+                    HelpText = "Nápověda k botovi.",
+                    DefaultAssumption = "Základní příkazy."
                 }
             }
         };
 
-        SablonaSluzba.CustomSablony.Add(customSablona);
+        TemplateService.CustomTemplates.Add(customSablona);
 
-        var pCustom = new SpecProjekt
+        var pCustom = new ProjectSpecification
         {
-            Nazev = "Test bot",
-            Napad = "Nápad na bota",
-            TypProjektuKlic = "discord-bot"
+            Name = "Test bot",
+            Idea = "Nápad na bota",
+            ProjectTypeKey = "discord-bot"
         };
 
-        var otCil = Otazky.Podle("cil-problem");
-        Over(otCil.GetText(pCustom.TypProjektuKlic) == "Jaké příkazy má Discord bot umět?", "custom: přepsaný text otázky");
-        Over(otCil.GetNapoveda(pCustom.TypProjektuKlic) == "Nápověda k botovi.", "custom: přepsaná nápověda");
-        Over(otCil.GetVychoziPredpoklad(pCustom.TypProjektuKlic) == "Základní příkazy.", "custom: přepsaný předpoklad");
+        var otCil = StandardQuestions.Under(pCustom, "cil-problem");
+        Over(otCil.GetText(pCustom.ProjectTypeKey) == "Jaké příkazy má Discord bot umět?", "custom: přepsaný text otázky");
+        Over(otCil.GetHelpText(pCustom.ProjectTypeKey) == "Nápověda k botovi.", "custom: přepsaná nápověda");
+        Over(otCil.GetDefaultAssumption(pCustom.ProjectTypeKey) == "Základní příkazy.", "custom: přepsaný předpoklad");
 
-        var otTech = Otazky.Podle("tech-platforma");
-        Over(otTech.GetText(pCustom.TypProjektuKlic) == otTech.GetText("Obecna"), "custom fallback: text otázky z Obecna");
-        Over(otTech.GetVychoziPredpoklad(pCustom.TypProjektuKlic) == otTech.GetVychoziPredpoklad("Obecna"), "custom fallback: předpoklad z Obecna");
+        var otTech = StandardQuestions.Under(pCustom, "tech-platforma");
+        Over(otTech.GetText(pCustom.ProjectTypeKey) == otTech.GetText("Obecna"), "custom fallback: text otázky z Obecna");
+        Over(otTech.GetDefaultAssumption(pCustom.ProjectTypeKey) == otTech.GetDefaultAssumption("Obecna"), "custom fallback: předpoklad z Obecna");
 
-        var pCustomZmena = new SpecProjekt();
-        SpecSluzba.ZmenTypProjektu(pCustomZmena, "discord-bot");
-        Over(pCustomZmena.TypProjektuKlic == "discord-bot", "custom: změna typu projektu klíče");
+        var pCustomZmena = new ProjectSpecification();
+        SpecificationService.ChangeProjectType(pCustomZmena, "discord-bot");
+        Over(pCustomZmena.ProjectTypeKey == "discord-bot", "custom: změna typu projektu klíče");
         
-        SpecSluzba.PouzijPredpoklad(pCustomZmena, "cil-problem");
-        var odpCil = SpecSluzba.OdpovedNa(pCustomZmena, "cil-problem");
+        SpecificationService.UseAssumption(pCustomZmena, "cil-problem");
+        var odpCil = SpecificationService.GetAnswerFor(pCustomZmena, "cil-problem");
         Over(odpCil.Text == "Základní příkazy.", "custom: použitý předpoklad z vlastní šablony");
 
-        Over(pCustomZmena.Log.Any(l => l.Akce == "Typ projektu" && l.Detail.Contains("Změna typu projektu z Obecná aplikace na Discord Bot")), "custom: správná zpráva v logu změn");
+        Over(pCustomZmena.ChangeLog.Any(l => l.Action == "Typ projektu" && l.Detail.Contains("Změna typu projektu z Obecná aplikace na Discord Bot")), "custom: správná zpráva v logu změn");
 
-        SablonaSluzba.CustomSablony.Clear();
+        TemplateService.CustomTemplates.Clear();
 
         // --- Testy dynamických otázek (v1.0) ---
-        var pDyn = new SpecProjekt
+        var pDyn = new ProjectSpecification
         {
-            Nazev = "Dynamicky projekt",
-            Napad = "Dynamicky napad"
+            Name = "Dynamicky projekt",
+            Idea = "Dynamicky napad"
         };
 
-        pDyn.Otazky.Add(new Otazka
+        pDyn.Questions.Add(new Question
         {
             Id = "dyn-q1",
-            Sekce = "Technika",
-            Dopad = Dopad.Vysoky,
-            Text = "Otazka 1?",
-            Napoveda = "Napoveda 1",
-            VychoziPredpoklad = "Predpoklad 1"
+            Section = "Technika",
+            Impact = Impact.High,
+            Text = "Question 1?",
+            HelpText = "HelpText 1",
+            DefaultAssumption = "Predpoklad 1"
         });
-        pDyn.Otazky.Add(new Otazka
+        pDyn.Questions.Add(new Question
         {
             Id = "dyn-q2",
-            Sekce = "Data",
-            Dopad = Dopad.Stredni,
-            Text = "Otazka 2?",
-            Napoveda = "Napoveda 2",
-            VychoziPredpoklad = "Predpoklad 2"
+            Section = "Data",
+            Impact = Impact.Medium,
+            Text = "Question 2?",
+            HelpText = "HelpText 2",
+            DefaultAssumption = "Predpoklad 2"
         });
 
-        var dynOtazky = SpecSluzba.VratOtazkyProjektu(pDyn).ToList();
-        Over(dynOtazky.Count == 2, "dynamic: projekt má přesně 2 otázky");
-        Over(dynOtazky[0].Id == "dyn-q1", "dynamic: první otázka sedí");
+        var dynQuestions = SpecificationService.GetProjectQuestions(pDyn).ToList();
+        Over(dynQuestions.Count == 2, "dynamic: projekt má přesně 2 otázky");
+        Over(dynQuestions[0].Id == "dyn-q1", "dynamic: první otázka sedí");
 
-        Over(SpecSluzba.DalsiNezodpovezena(pDyn).Id == "dyn-q1", "dynamic: další nezodpovězená je první");
-        Over(SpecSluzba.PocetZodpovezenych(pDyn) == 0, "dynamic: 0 zodpovězených");
+        Over(SpecificationService.GetNextUnansweredQuestion(pDyn).Id == "dyn-q1", "dynamic: další nezodpovězená je první");
+        Over(SpecificationService.GetAnsweredCount(pDyn) == 0, "dynamic: 0 zodpovězených");
 
-        SpecSluzba.Odpovez(pDyn, "dyn-q1", "Moje odpoved 1");
-        Over(SpecSluzba.PocetZodpovezenych(pDyn) == 1, "dynamic: 1 zodpovězená");
-        Over(SpecSluzba.DalsiNezodpovezena(pDyn).Id == "dyn-q2", "dynamic: další nezodpovězená je druhá");
+        SpecificationService.AnswerQuestion(pDyn, "dyn-q1", "Moje odpoved 1");
+        Over(SpecificationService.GetAnsweredCount(pDyn) == 1, "dynamic: 1 zodpovězená");
+        Over(SpecificationService.GetNextUnansweredQuestion(pDyn).Id == "dyn-q2", "dynamic: další nezodpovězená je druhá");
 
-        SpecSluzba.PouzijPredpoklad(pDyn, "dyn-q2");
-        Over(SpecSluzba.PocetPredpokladu(pDyn) == 1, "dynamic: 1 předpoklad");
-        Over(SpecSluzba.DalsiNezodpovezena(pDyn) == null, "dynamic: žádná další nezodpovězená");
+        SpecificationService.UseAssumption(pDyn, "dyn-q2");
+        Over(SpecificationService.GetAssumptionsCount(pDyn) == 1, "dynamic: 1 předpoklad");
+        Over(SpecificationService.GetNextUnansweredQuestion(pDyn) == null, "dynamic: žádná další nezodpovězená");
 
-        string mdDyn = SpecSluzba.RenderMarkdown(pDyn);
-        Over(mdDyn.Contains("Otazka 1?"), "dynamic MD: obsahuje text první otázky");
+        string mdDyn = SpecificationService.RenderMarkdown(pDyn);
+        Over(mdDyn.Contains("Question 1?"), "dynamic MD: obsahuje text první otázky");
         Over(mdDyn.Contains("Moje odpoved 1"), "dynamic MD: obsahuje odpověď na první");
         Over(mdDyn.Contains("Predpoklad 2"), "dynamic MD: obsahuje předpoklad na druhou");
 
         string tmpCestaDyn = Path.Combine(Path.GetTempPath(), "test_dyn.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pDyn, tmpCestaDyn);
-            var nactenyDyn = SpecSluzba.NactiProjekt(tmpCestaDyn);
-            Over(nactenyDyn.Otazky.Count == 2, "dynamic roundtrip: počet uložených otázek sedí");
-            Over(nactenyDyn.Otazky[0].Id == "dyn-q1", "dynamic roundtrip: ID první otázky sedí");
-            Over(nactenyDyn.Otazky[1].Text == "Otazka 2?", "dynamic roundtrip: text druhé otázky sedí");
+            SpecificationService.SaveProject(pDyn, tmpCestaDyn);
+            var nactenyDyn = SpecificationService.LoadProject(tmpCestaDyn);
+            Over(nactenyDyn.Questions.Count == 2, "dynamic roundtrip: počet uložených otázek sedí");
+            Over(nactenyDyn.Questions[0].Id == "dyn-q1", "dynamic roundtrip: ID první otázky sedí");
+            Over(nactenyDyn.Questions[1].Text == "Question 2?", "dynamic roundtrip: text druhé otázky sedí");
         }
         finally
         {
@@ -372,24 +373,24 @@ internal static class Testy
         }
 
         // --- rychlé nápovědy odpovědí (quick options) ---
-        var pQ = new SpecProjekt();
-        var otQ1 = SpecSluzba.VratOtazkyProjektu(pQ).First(o => o.Id == "tech-platforma");
-        var opts1 = otQ1.GetMoznosti(pQ.TypProjektuKlic);
+        var pQ = new ProjectSpecification();
+        var otQ1 = SpecificationService.GetProjectQuestions(pQ).First(o => o.Id == "tech-platforma");
+        var opts1 = otQ1.GetOptions(pQ.ProjectTypeKey);
         Over(opts1.Count == 3, "quick options: výchozí otázka má 3 možnosti");
         Over(opts1.Contains("Web (React + Node.js)"), "quick options: obsahuje správnou výchozí platformu");
 
-        var pDynQ = new SpecProjekt();
-        pDynQ.Otazky.Add(new Otazka { Id = "q-dyn", Text = "Spec q?", Moznosti = new List<string> { "Ano", "Ne", "Možná" } });
-        var otDynQ = pDynQ.Otazky[0];
-        Over(otDynQ.GetMoznosti(pDynQ.TypProjektuKlic).Count == 3, "quick options: dynamická otázka vrací své možnosti");
+        var pDynQ = new ProjectSpecification();
+        pDynQ.Questions.Add(new Question { Id = "q-dyn", Text = "Spec q?", Options = new List<string> { "Ano", "Ne", "Možná" } });
+        var otDynQ = pDynQ.Questions[0];
+        Over(otDynQ.GetOptions(pDynQ.ProjectTypeKey).Count == 3, "quick options: dynamická otázka vrací své možnosti");
 
         string tmpCestaQ = Path.Combine(Path.GetTempPath(), "test_quick.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pDynQ, tmpCestaQ);
-            var nactenyQ = SpecSluzba.NactiProjekt(tmpCestaQ);
-            Over(nactenyQ.Otazky[0].Moznosti.Count == 3, "quick options roundtrip: počet možností sedí");
-            Over(nactenyQ.Otazky[0].Moznosti[2] == "Možná", "quick options roundtrip: hodnota možnosti sedí");
+            SpecificationService.SaveProject(pDynQ, tmpCestaQ);
+            var nactenyQ = SpecificationService.LoadProject(tmpCestaQ);
+            Over(nactenyQ.Questions[0].Options.Count == 3, "quick options roundtrip: počet možností sedí");
+            Over(nactenyQ.Questions[0].Options[2] == "Možná", "quick options roundtrip: hodnota možnosti sedí");
         }
         finally
         {
@@ -397,26 +398,26 @@ internal static class Testy
         }
 
         // --- uživatelské příběhy (user stories) ---
-        var pUS = new SpecProjekt();
+        var pUS = new ProjectSpecification();
         pUS.UserStories.Add(new UserStory
         {
             Id = "US-100",
-            Titulek = "Test story",
-            Popis = "Jako tester chci spustit test, abych overil kod.",
-            Priorita = "Vysoká",
-            Kriteria = new List<string> { "Kriterium 1", "Kriterium 2" }
+            Title = "Test story",
+            Description = "Jako tester chci spustit test, abych overil kod.",
+            Priority = "Vysoká",
+            Criteria = new List<string> { "Kriterium 1", "Kriterium 2" }
         });
 
         string tmpCestaUS = Path.Combine(Path.GetTempPath(), "test_us.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pUS, tmpCestaUS);
-            var nactenyUS = SpecSluzba.NactiProjekt(tmpCestaUS);
+            SpecificationService.SaveProject(pUS, tmpCestaUS);
+            var nactenyUS = SpecificationService.LoadProject(tmpCestaUS);
             Over(nactenyUS.UserStories.Count == 1, "user stories roundtrip: počet stories sedí");
             Over(nactenyUS.UserStories[0].Id == "US-100", "user stories roundtrip: ID story sedí");
-            Over(nactenyUS.UserStories[0].Titulek == "Test story", "user stories roundtrip: titulek story sedí");
-            Over(nactenyUS.UserStories[0].Kriteria.Count == 2, "user stories roundtrip: počet kritérií sedí");
-            Over(nactenyUS.UserStories[0].Kriteria[1] == "Kriterium 2", "user stories roundtrip: hodnota kritéria sedí");
+            Over(nactenyUS.UserStories[0].Title == "Test story", "user stories roundtrip: titulek story sedí");
+            Over(nactenyUS.UserStories[0].Criteria.Count == 2, "user stories roundtrip: počet kritérií sedí");
+            Over(nactenyUS.UserStories[0].Criteria[1] == "Kriterium 2", "user stories roundtrip: hodnota kritéria sedí");
         }
         finally
         {
@@ -424,18 +425,18 @@ internal static class Testy
         }
 
         // --- chat history ---
-        var pChat = new SpecProjekt();
-        pChat.ChatHistory.Add(new ChatMessage { Role = "user", Text = "Dotaz 1", Cas = DateTime.Now });
-        pChat.ChatHistory.Add(new ChatMessage { Role = "model", Text = "Odpoved 1", Cas = DateTime.Now });
+        var pChat = new ProjectSpecification();
+        pChat.ChatHistory.Add(new ChatMessage { Role = "user", Text = "Dotaz 1", Timestamp = DateTime.Now });
+        pChat.ChatHistory.Add(new ChatMessage { Role = "model", Text = "Answer 1", Timestamp = DateTime.Now });
 
         string tmpCestaChat = Path.Combine(Path.GetTempPath(), "test_chat.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pChat, tmpCestaChat);
-            var nactenyChat = SpecSluzba.NactiProjekt(tmpCestaChat);
+            SpecificationService.SaveProject(pChat, tmpCestaChat);
+            var nactenyChat = SpecificationService.LoadProject(tmpCestaChat);
             Over(nactenyChat.ChatHistory.Count == 2, "chat history roundtrip: počet zpráv sedí");
             Over(nactenyChat.ChatHistory[0].Role == "user", "chat history roundtrip: role první zprávy sedí");
-            Over(nactenyChat.ChatHistory[1].Text == "Odpoved 1", "chat history roundtrip: text druhé zprávy sedí");
+            Over(nactenyChat.ChatHistory[1].Text == "Answer 1", "chat history roundtrip: text druhé zprávy sedí");
         }
         finally
         {
@@ -443,16 +444,16 @@ internal static class Testy
         }
 
         // --- mockup image ---
-        var pMockup = new SpecProjekt();
-        pMockup.MockupNazev = "mockup.png";
+        var pMockup = new ProjectSpecification();
+        pMockup.MockupName = "mockup.png";
         pMockup.MockupBase64 = "SGVsbG8gd29ybGQ="; // Base64 for "Hello world"
 
         string tmpCestaMockup = Path.Combine(Path.GetTempPath(), "test_mockup.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pMockup, tmpCestaMockup);
-            var nactenyMockup = SpecSluzba.NactiProjekt(tmpCestaMockup);
-            Over(nactenyMockup.MockupNazev == "mockup.png", "mockup roundtrip: název mockupů sedí");
+            SpecificationService.SaveProject(pMockup, tmpCestaMockup);
+            var nactenyMockup = SpecificationService.LoadProject(tmpCestaMockup);
+            Over(nactenyMockup.MockupName == "mockup.png", "mockup roundtrip: název mockupů sedí");
             Over(nactenyMockup.MockupBase64 == "SGVsbG8gd29ybGQ=", "mockup roundtrip: Base64 kódování sedí");
         }
         finally
@@ -461,38 +462,38 @@ internal static class Testy
         }
 
         // --- metrics ---
-        var pMetriky = new SpecProjekt();
-        pMetriky.Metriky = new ProjektMetriky
+        var pMetrics = new ProjectSpecification();
+        pMetrics.Metrics = new ProjectMetrics
         {
-            CasovyOdhadMin = "80",
-            CasovyOdhadMax = "120",
-            Komplexita = "Vysoká",
-            SlozeniTymu = "1x dev",
-            DoporucenyRozpocet = "100k",
-            TechnickyRozbor = "arch",
-            RizikaMetriky = new List<string> { "Risk 1" },
-            CasVypoctu = DateTime.Now
+            TimeEstimateMin = "80",
+            TimeEstimateMax = "120",
+            Complexity = "Vysoká",
+            TeamComposition = "1x dev",
+            RecommendedBudget = "100k",
+            TechnicalAnalysis = "arch",
+            MetricRisks = new List<string> { "Risk 1" },
+            CalculationTimestamp = DateTime.Now
         };
 
-        string tmpCestaMetriky = Path.Combine(Path.GetTempPath(), "test_metriky.vcbrief");
+        string tmpCestaMetrics = Path.Combine(Path.GetTempPath(), "test_metriky.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pMetriky, tmpCestaMetriky);
-            var nactenyMetriky = SpecSluzba.NactiProjekt(tmpCestaMetriky);
-            Over(nactenyMetriky.Metriky.CasovyOdhadMin == "80", "metrics roundtrip: odhad min sedí");
-            Over(nactenyMetriky.Metriky.CasovyOdhadMax == "120", "metrics roundtrip: odhad max sedí");
-            Over(nactenyMetriky.Metriky.Komplexita == "Vysoká", "metrics roundtrip: komplexita sedí");
-            Over(nactenyMetriky.Metriky.RizikaMetriky.Count == 1, "metrics roundtrip: počet rizik sedí");
-            Over(nactenyMetriky.Metriky.RizikaMetriky[0] == "Risk 1", "metrics roundtrip: detail rizika sedí");
+            SpecificationService.SaveProject(pMetrics, tmpCestaMetrics);
+            var nactenyMetrics = SpecificationService.LoadProject(tmpCestaMetrics);
+            Over(nactenyMetrics.Metrics.TimeEstimateMin == "80", "metrics roundtrip: odhad min sedí");
+            Over(nactenyMetrics.Metrics.TimeEstimateMax == "120", "metrics roundtrip: odhad max sedí");
+            Over(nactenyMetrics.Metrics.Complexity == "Vysoká", "metrics roundtrip: komplexita sedí");
+            Over(nactenyMetrics.Metrics.MetricRisks.Count == 1, "metrics roundtrip: počet rizik sedí");
+            Over(nactenyMetrics.Metrics.MetricRisks[0] == "Risk 1", "metrics roundtrip: detail rizika sedí");
         }
         finally
         {
-            if (File.Exists(tmpCestaMetriky)) File.Delete(tmpCestaMetriky);
+            if (File.Exists(tmpCestaMetrics)) File.Delete(tmpCestaMetrics);
         }
 
         // --- HTML rendering ---
-        var pHtml = new SpecProjekt { Nazev = "HTML Test Projekt" };
-        string html = SpecSluzba.RenderHtml(pHtml);
+        var pHtml = new ProjectSpecification { Name = "HTML Test Projekt" };
+        string html = SpecificationService.RenderHtml(pHtml);
         Over(!string.IsNullOrWhiteSpace(html), "HTML rendering: výstup není prázdný");
         Over(html.Contains("<!DOCTYPE html>"), "HTML rendering: obsahuje doctype");
         Over(html.Contains("HTML Test Projekt"), "HTML rendering: obsahuje název projektu");
@@ -508,28 +509,28 @@ internal static class Testy
             if (File.Exists(tmpAtomTmp)) File.Delete(tmpAtomTmp);
             if (File.Exists(tmpAtomBak)) File.Delete(tmpAtomBak);
 
-            var pAtom = new SpecProjekt { Nazev = "Atomický test" };
-            SpecSluzba.UlozProjekt(pAtom, tmpAtom);
+            var pAtom = new ProjectSpecification { Name = "Atomický test" };
+            SpecificationService.SaveProject(pAtom, tmpAtom);
             Over(File.Exists(tmpAtom), "atomický zápis: první uložení vytvoří soubor");
             Over(!File.Exists(tmpAtomTmp), "atomický zápis: po uložení nezůstává .tmp");
             Over(!File.Exists(tmpAtomBak), "atomický zápis: první uložení nevytváří .bak");
 
-            pAtom.Nazev = "Atomický test v2";
-            SpecSluzba.UlozProjekt(pAtom, tmpAtom);
+            pAtom.Name = "Atomický test v2";
+            SpecificationService.SaveProject(pAtom, tmpAtom);
             Over(File.Exists(tmpAtomBak), "atomický zápis: druhé uložení vytvoří .bak");
             Over(!File.Exists(tmpAtomTmp), "atomický zápis: po druhém uložení nezůstává .tmp");
 
-            var pAtomNacteny = SpecSluzba.NactiProjekt(tmpAtom);
-            Over(pAtomNacteny.Nazev == "Atomický test v2", "atomický zápis: obsah jde načíst zpět");
+            var pAtomNacteny = SpecificationService.LoadProject(tmpAtom);
+            Over(pAtomNacteny.Name == "Atomický test v2", "atomický zápis: obsah jde načíst zpět");
 
-            var pAtomZaloha = SpecSluzba.NactiProjekt(tmpAtomBak);
-            Over(pAtomZaloha.Nazev == "Atomický test", "atomický zápis: .bak obsahuje předchozí verzi");
+            var pAtomZaloha = SpecificationService.LoadProject(tmpAtomBak);
+            Over(pAtomZaloha.Name == "Atomický test", "atomický zápis: .bak obsahuje předchozí verzi");
 
             string slozkaAtomKoren = Path.Combine(Path.GetTempPath(), "cp_atomic_" + Guid.NewGuid().ToString("N"));
             string cestaVPodslozce = Path.Combine(slozkaAtomKoren, "podslozka", "novy.vcbrief");
             try
             {
-                SpecSluzba.UlozProjekt(pAtom, cestaVPodslozce);
+                SpecificationService.SaveProject(pAtom, cestaVPodslozce);
                 Over(File.Exists(cestaVPodslozce), "atomický zápis: založí chybějící adresář");
             }
             finally
@@ -545,38 +546,38 @@ internal static class Testy
         }
 
         // --- log přepisu odpovědi „bylo → je“ ---
-        var pByloJe = new SpecProjekt();
-        SpecSluzba.Odpovez(pByloJe, "cil-problem", "První verze odpovědi");
-        var prvniZaznam = pByloJe.Log.Last(l => l.Akce == "Odpověď");
+        var pByloJe = new ProjectSpecification();
+        SpecificationService.AnswerQuestion(pByloJe, "cil-problem", "První verze odpovědi");
+        var prvniZaznam = pByloJe.ChangeLog.Last(l => l.Action == "Odpověď");
         Over(!prvniZaznam.Detail.Contains("bylo:"), "log: první odpověď nemá formát bylo→je");
 
-        SpecSluzba.Odpovez(pByloJe, "cil-problem", "Druhá verze odpovědi");
-        var zaznamZmeny = pByloJe.Log.Last(l => l.Akce == "Změna odpovědi");
+        SpecificationService.AnswerQuestion(pByloJe, "cil-problem", "Druhá verze odpovědi");
+        var zaznamZmeny = pByloJe.ChangeLog.Last(l => l.Action == "Změna odpovědi");
         Over(zaznamZmeny.Detail.Contains("bylo: 'První verze odpovědi'"), "log změny: obsahuje původní text (bylo)");
         Over(zaznamZmeny.Detail.Contains("je: 'Druhá verze odpovědi'"), "log změny: obsahuje nový text (je)");
 
-        SpecSluzba.Odpovez(pByloJe, "cil-problem", "Druhá verze odpovědi");
-        var stejnyText = pByloJe.Log.Last(l => l.Akce == "Změna odpovědi");
+        SpecificationService.AnswerQuestion(pByloJe, "cil-problem", "Druhá verze odpovědi");
+        var stejnyText = pByloJe.ChangeLog.Last(l => l.Action == "Změna odpovědi");
         Over(!stejnyText.Detail.Contains("bylo:"), "log změny: přepis stejným textem nemá formát bylo→je");
 
-        // --- roundtrip nových polí (AiNalezy, CasGenerovaniStories, CasAiKontroly) ---
-        var pNovaPole = new SpecProjekt { Nazev = "Nová pole" };
-        pNovaPole.CasGenerovaniStories = new DateTime(2026, 1, 2, 3, 4, 5);
-        pNovaPole.CasAiKontroly = new DateTime(2026, 2, 3, 4, 5, 6);
-        pNovaPole.AiNalezy.Add(new AiNalez { Zavaznost = "Rozpor", Titulek = "AI titulek", Detail = "AI detail" });
-        pNovaPole.AiNalezy.Add(new AiNalez { Zavaznost = "Varovani", Titulek = "AI titulek 2", Detail = "AI detail 2" });
+        // --- roundtrip nových polí (AiFindings, CasGenerovaniStories, CasAiKontroly) ---
+        var pNovaPole = new ProjectSpecification { Name = "Nová pole" };
+        pNovaPole.StoriesGenerationTimestamp = new DateTime(2026, 1, 2, 3, 4, 5);
+        pNovaPole.AiCheckTimestamp = new DateTime(2026, 2, 3, 4, 5, 6);
+        pNovaPole.AiFindings.Add(new AiFinding { Severity = "Rozpor", Title = "AI titulek", Detail = "AI detail" });
+        pNovaPole.AiFindings.Add(new AiFinding { Severity = "Varovani", Title = "AI titulek 2", Detail = "AI detail 2" });
 
         string tmpCestaNova = Path.Combine(Path.GetTempPath(), "test_nova_pole.vcbrief");
         try
         {
-            SpecSluzba.UlozProjekt(pNovaPole, tmpCestaNova);
-            var nactenyNova = SpecSluzba.NactiProjekt(tmpCestaNova);
-            Over(nactenyNova.CasGenerovaniStories == pNovaPole.CasGenerovaniStories, "nová pole roundtrip: CasGenerovaniStories sedí");
-            Over(nactenyNova.CasAiKontroly == pNovaPole.CasAiKontroly, "nová pole roundtrip: CasAiKontroly sedí");
-            Over(nactenyNova.AiNalezy.Count == 2, "nová pole roundtrip: počet AI nálezů sedí");
-            Over(nactenyNova.AiNalezy[0].Zavaznost == "Rozpor", "nová pole roundtrip: závažnost nálezu sedí");
-            Over(nactenyNova.AiNalezy[1].Titulek == "AI titulek 2", "nová pole roundtrip: titulek nálezu sedí");
-            Over(nactenyNova.AiNalezy[1].Detail == "AI detail 2", "nová pole roundtrip: detail nálezu sedí");
+            SpecificationService.SaveProject(pNovaPole, tmpCestaNova);
+            var nactenyNova = SpecificationService.LoadProject(tmpCestaNova);
+            Over(nactenyNova.StoriesGenerationTimestamp == pNovaPole.StoriesGenerationTimestamp, "nová pole roundtrip: CasGenerovaniStories sedí");
+            Over(nactenyNova.AiCheckTimestamp == pNovaPole.AiCheckTimestamp, "nová pole roundtrip: CasAiKontroly sedí");
+            Over(nactenyNova.AiFindings.Count == 2, "nová pole roundtrip: počet AI nálezů sedí");
+            Over(nactenyNova.AiFindings[0].Severity == "Rozpor", "nová pole roundtrip: závažnost nálezu sedí");
+            Over(nactenyNova.AiFindings[1].Title == "AI titulek 2", "nová pole roundtrip: titulek nálezu sedí");
+            Over(nactenyNova.AiFindings[1].Detail == "AI detail 2", "nová pole roundtrip: detail nálezu sedí");
         }
         finally
         {
@@ -588,52 +589,52 @@ internal static class Testy
         string tmpStary = Path.Combine(Path.GetTempPath(), "test_stary_format.vcbrief");
         try
         {
-            File.WriteAllText(tmpStary, "{\"Nazev\":\"Starý projekt\",\"AiNalezy\":null}");
-            var pStaryFormat = SpecSluzba.NactiProjekt(tmpStary);
-            Over(pStaryFormat.AiNalezy != null && pStaryFormat.AiNalezy.Count == 0, "zpětná kompatibilita: AiNalezy se doinicializují");
-            Over(pStaryFormat.CasGenerovaniStories == null, "zpětná kompatibilita: CasGenerovaniStories je null");
-            Over(pStaryFormat.CasAiKontroly == null, "zpětná kompatibilita: CasAiKontroly je null");
+            File.WriteAllText(tmpStary, "{\"Nazev\":\"Starý projekt\",\"AiFindings\":null}");
+            var pStaryFormat = SpecificationService.LoadProject(tmpStary);
+            Over(pStaryFormat.AiFindings != null && pStaryFormat.AiFindings.Count == 0, "zpětná kompatibilita: AiFindings se doinicializují");
+            Over(pStaryFormat.StoriesGenerationTimestamp == null, "zpětná kompatibilita: CasGenerovaniStories je null");
+            Over(pStaryFormat.AiCheckTimestamp == null, "zpětná kompatibilita: CasAiKontroly je null");
         }
         finally
         {
             if (File.Exists(tmpStary)) File.Delete(tmpStary);
         }
 
-        // --- převod nálezu kontroly na AiNalez ---
-        var prevod = AiNalez.Z(new Nalez { Zavaznost = Zavaznost.Rozpor, Titulek = "T", Detail = "D" });
-        Over(prevod.Zavaznost == "Rozpor" && prevod.Titulek == "T" && prevod.Detail == "D", "AiNalez.Z: převod z Nalez sedí 1:1");
+        // --- převod nálezu kontroly na AiFinding ---
+        var prevod = AiFinding.FromFinding(new ConsistencyFinding { Severity = Severity.Conflict, Title = "T", Detail = "D" });
+        Over(prevod.Severity == "Conflict" && prevod.Title == "T" && prevod.Detail == "D", "AiFinding.Z: převod z ConsistencyFinding sedí 1:1");
 
         // --- poznámky o zastaralosti v exportech ---
-        var pStale = new SpecProjekt { Nazev = "Zastaralé odhady" };
-        pStale.Metriky = new ProjektMetriky
+        var pStale = new ProjectSpecification { Name = "Zastaralé odhady" };
+        pStale.Metrics = new ProjectMetrics
         {
-            CasovyOdhadMin = "10 h",
-            CasovyOdhadMax = "20 h",
-            Komplexita = "Nízká",
-            TechnickyRozbor = "rozbor",
-            CasVypoctu = DateTime.Now.AddHours(-2)
+            TimeEstimateMin = "10 h",
+            TimeEstimateMax = "20 h",
+            Complexity = "Nízká",
+            TechnicalAnalysis = "rozbor",
+            CalculationTimestamp = DateTime.Now.AddHours(-2)
         };
-        pStale.UserStories.Add(new UserStory { Id = "US-01", Titulek = "Story", Popis = "Popis", Priorita = "Vysoká" });
-        pStale.CasGenerovaniStories = DateTime.Now.AddHours(-2);
-        pStale.Upraveno = DateTime.Now;
+        pStale.UserStories.Add(new UserStory { Id = "US-01", Title = "Story", Description = "Description", Priority = "Vysoká" });
+        pStale.StoriesGenerationTimestamp = DateTime.Now.AddHours(-2);
+        pStale.UpdatedAt = DateTime.Now;
 
-        string mdStale = SpecSluzba.RenderMarkdown(pStale);
+        string mdStale = SpecificationService.RenderMarkdown(pStale);
         Over(mdStale.Contains("Odhad byl vygenerován pro starší verzi specifikace"), "MD: poznámka o zastaralém odhadu");
         Over(mdStale.Contains("User stories byly vygenerovány pro starší verzi specifikace"), "MD: poznámka o zastaralých stories");
 
-        string htmlStale = SpecSluzba.RenderHtml(pStale);
+        string htmlStale = SpecificationService.RenderHtml(pStale);
         Over(htmlStale.Contains("Odhad byl vygenerován pro starší verzi specifikace"), "HTML: poznámka o zastaralém odhadu");
         Over(htmlStale.Contains("User stories byly vygenerovány pro starší verzi specifikace"), "HTML: poznámka o zastaralých stories");
 
-        var pCerstve = new SpecProjekt { Nazev = "Čerstvé odhady" };
-        pCerstve.Metriky = new ProjektMetriky { CasovyOdhadMin = "10 h", CasVypoctu = DateTime.Now.AddHours(1) };
-        pCerstve.UserStories.Add(new UserStory { Id = "US-01", Titulek = "Story" });
-        pCerstve.CasGenerovaniStories = DateTime.Now.AddHours(1);
-        Over(!SpecSluzba.RenderMarkdown(pCerstve).Contains("pro starší verzi specifikace"), "MD: čerstvé odhady bez poznámky");
-        Over(SpecSluzba.MetrikyJsouZastarale(pStale), "helper: MetrikyJsouZastarale platí pro starý výpočet");
-        Over(!SpecSluzba.MetrikyJsouZastarale(pCerstve), "helper: MetrikyJsouZastarale neplatí pro čerstvý výpočet");
-        Over(SpecSluzba.StoriesJsouZastarale(pStale), "helper: StoriesJsouZastarale platí pro staré stories");
-        Over(!SpecSluzba.StoriesJsouZastarale(new SpecProjekt()), "helper: StoriesJsouZastarale neplatí bez stories");
+        var pCerstve = new ProjectSpecification { Name = "Čerstvé odhady" };
+        pCerstve.Metrics = new ProjectMetrics { TimeEstimateMin = "10 h", CalculationTimestamp = DateTime.Now.AddHours(1) };
+        pCerstve.UserStories.Add(new UserStory { Id = "US-01", Title = "Story" });
+        pCerstve.StoriesGenerationTimestamp = DateTime.Now.AddHours(1);
+        Over(!SpecificationService.RenderMarkdown(pCerstve).Contains("pro starší verzi specifikace"), "MD: čerstvé odhady bez poznámky");
+        Over(SpecificationService.AreMetricsOutdated(pStale), "helper: AreMetricsOutdated platí pro starý výpočet");
+        Over(!SpecificationService.AreMetricsOutdated(pCerstve), "helper: AreMetricsOutdated neplatí pro čerstvý výpočet");
+        Over(SpecificationService.AreStoriesOutdated(pStale), "helper: AreStoriesOutdated platí pro staré stories");
+        Over(!SpecificationService.AreStoriesOutdated(new ProjectSpecification()), "helper: AreStoriesOutdated neplatí bez stories");
 
         // --- patička exportů ---
         Over(mdStale.Contains("*Vytvořeno nástrojem CodePlanner*"), "MD: patička obsahuje nový text");
@@ -653,23 +654,23 @@ internal static class Testy
         Over(GeminiService.OrezText(dlouhyText) == dlouhyText, "OrezText: výchozí limit 100 000 znaků text pod limitem nemění");
 
         // --- L1: JSON export po AI analýze obsahuje všechny odpovědi ---
-        var pJsonDyn = new SpecProjekt { Nazev = "JSON Dyn" };
-        pJsonDyn.Otazky.Add(new Otazka { Id = "dyn-q1", Sekce = "Technika", Text = "Q1?", VychoziPredpoklad = "P1" });
-        SpecSluzba.Odpovez(pJsonDyn, "dyn-q1", "Odpoved na dynamic");
-        string jsonDyn = SpecSluzba.RenderJson(pJsonDyn);
+        var pJsonDyn = new ProjectSpecification { Name = "JSON Dyn" };
+        pJsonDyn.Questions.Add(new Question { Id = "dyn-q1", Section = "Technika", Text = "Q1?", DefaultAssumption = "P1" });
+        SpecificationService.AnswerQuestion(pJsonDyn, "dyn-q1", "Answer na dynamic");
+        string jsonDyn = SpecificationService.RenderJson(pJsonDyn);
         Over(jsonDyn.Contains("\"id\": \"dyn-q1\""), "L1 test: JSON obsahuje ID dynamické otázky");
-        Over(jsonDyn.Contains("\"odpoved\": \"Odpoved na dynamic\""), "L1 test: JSON obsahuje odpověď na dynamickou otázku");
+        Over(jsonDyn.Contains("\"answer\": \"Answer na dynamic\""), "L1 test: JSON obsahuje odpověď na dynamickou otázku");
 
         // --- L2: XSS / JS injection v HTML exportu přes ID user story ---
-        var pXss = new SpecProjekt { Nazev = "HTML XSS Test" };
+        var pXss = new ProjectSpecification { Name = "HTML XSS Test" };
         pXss.UserStories.Add(new UserStory
         {
             Id = "US-1<script>alert('XSS')</script>",
-            Titulek = "Test story",
-            Popis = "Popis story",
-            Priorita = "Vysoká"
+            Title = "Test story",
+            Description = "Description story",
+            Priority = "Vysoká"
         });
-        string htmlXss = SpecSluzba.RenderHtml(pXss);
+        string htmlXss = SpecificationService.RenderHtml(pXss);
         Over(!htmlXss.Contains("<div class=\"backlog-item\" id=\"story-US-1<script>"), "L2 test: HTML neobsahuje surový skript v id");
         Over(htmlXss.Contains("id=\"story-US-1scriptalertXSSscript\""), "L2 test: HTML obsahuje bezpečně vyčištěné id");
         Over(htmlXss.Contains("toggleStory(this, 'story-US-1scriptalertXSSscript')"), "L2 test: HTML obsahuje bezpečně vyčištěné id v onchange");

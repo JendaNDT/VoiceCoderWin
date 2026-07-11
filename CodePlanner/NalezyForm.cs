@@ -9,21 +9,21 @@ namespace CodePlanner
 {
     public class NalezyForm : Form
     {
-        private readonly List<Nalez> _offlineNalezy;
+        private readonly List<ConsistencyFinding> _offlineFindings;
         private readonly string _apiKey;
         private readonly string _model;
-        private readonly SpecProjekt _projekt;
+        private readonly ProjectSpecification _project;
         private ListView lvNalezy;
         private Button btnAiCheck;
         private Label lblStatus;
         private CancellationTokenSource _cts = null;
 
-        public NalezyForm(List<Nalez> offlineNalezy, string apiKey, string model, SpecProjekt projekt)
+        public NalezyForm(List<ConsistencyFinding> offlineFindings, string apiKey, string model, ProjectSpecification project)
         {
-            _offlineNalezy = offlineNalezy;
+            _offlineFindings = offlineFindings;
             _apiKey = apiKey;
             _model = model;
-            _projekt = projekt;
+            _project = project;
 
             Text = "Kontrola konzistence specifikace";
             Size = new Size(750, 480);
@@ -34,7 +34,9 @@ namespace CodePlanner
             ShowInTaskbar = false;
             MinimizeBox = false;
             MaximizeBox = false;
-            Font = new Font("Segoe UI", 9.5f);
+            Font = DesignSystem.Body;
+            BackColor = DesignSystem.SvetlePozadi;
+            ForeColor = DesignSystem.Navy;
 
             this.Resize += (s, e) =>
             {
@@ -65,7 +67,7 @@ namespace CodePlanner
                 FullRowSelect = true,
                 HeaderStyle = ColumnHeaderStyle.Nonclickable,
                 BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Segoe UI", 9.25f)
+                Font = DesignSystem.Body
             };
             lvNalezy.Columns.Add("Typ", 110);
             lvNalezy.Columns.Add("Problém / Téma", 180);
@@ -75,9 +77,9 @@ namespace CodePlanner
             {
                 Text = "Kontrola porovnává klíčová slova. Pro sémantické posouzení spusť hloubkovou AI analýzu.",
                 Dock = DockStyle.Fill,
-                ForeColor = Color.DimGray,
+                ForeColor = DesignSystem.SedaText,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Italic)
+                Font = DesignSystem.BodyItalic
             };
 
             btnAiCheck = new Button
@@ -85,11 +87,11 @@ namespace CodePlanner
                 Text = "🧠 Spustit hloubkovou AI analýzu",
                 Height = 32,
                 AutoSize = true,
-                BackColor = Color.FromArgb(16, 35, 63), // Navy
+                BackColor = DesignSystem.Navy,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9.5f)
+                Font = DesignSystem.BodyBold
             };
             btnAiCheck.FlatAppearance.BorderSize = 0;
             btnAiCheck.Click += BtnAiCheck_Click;
@@ -106,12 +108,12 @@ namespace CodePlanner
                 Height = 32,
                 Width = 100,
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Font = DesignSystem.Body
             };
             btnZavrit.FlatAppearance.BorderColor = Color.Silver;
             btnZavrit.Click += (s, e) => Close();
 
-            // Zpřístupníme klávesu ESC pro zavření dialogu
             this.CancelButton = btnZavrit;
 
             var flow = new FlowLayoutPanel
@@ -130,33 +132,29 @@ namespace CodePlanner
 
             Controls.Add(layout);
 
-            NaplnNalezy(offlineNalezy, isAi: false);
-
-            this.FormClosing += (s, e) =>
-            {
-                this.Font?.Dispose();
-                lvNalezy?.Font?.Dispose();
-                lblStatus?.Font?.Dispose();
-                btnAiCheck?.Font?.Dispose();
-            };
+            NaplnNalezy(_offlineFindings, isAi: false);
         }
 
-        private void NaplnNalezy(List<Nalez> list, bool isAi)
+        // Small italic font getter for the help label
+        private static Font DesignSystemSmallItalic => DesignSystem.BodyItalic;
+
+        private void NaplnNalezy(List<ConsistencyFinding> list, bool isAi)
         {
             lvNalezy.BeginUpdate();
             if (!isAi) lvNalezy.Items.Clear();
 
             foreach (var n in list)
             {
-                var it = new ListViewItem(n.Zavaznost == Zavaznost.Rozpor ? "❗ ROZPOR" : "⚠ Varování");
-                it.ForeColor = n.Zavaznost == Zavaznost.Rozpor ? Color.FromArgb(155, 28, 28) : Color.FromArgb(180, 110, 0);
+                bool isConflict = n.Severity == Severity.Conflict;
+                var it = new ListViewItem(isConflict ? "❗ ROZPOR" : "⚠ Varování");
+                it.ForeColor = isConflict ? DesignSystem.Cervena : DesignSystem.Oranzova;
                 
                 if (isAi)
                 {
-                    it.Text = n.Zavaznost == Zavaznost.Rozpor ? "🧠 ROZPOR (AI)" : "🧠 Varování (AI)";
+                    it.Text = isConflict ? "🧠 ROZPOR (AI)" : "🧠 Varování (AI)";
                 }
 
-                it.SubItems.Add(n.Titulek);
+                it.SubItems.Add(n.Title);
                 it.SubItems.Add(n.Detail);
                 lvNalezy.Items.Add(it);
             }
@@ -174,27 +172,27 @@ namespace CodePlanner
             btnAiCheck.Text = "❌ Zrušit analýzu";
             btnAiCheck.Enabled = true;
             lblStatus.Text = "Volám Gemini API pro hloubkovou kontrolu, chvíli strpení...";
-            lblStatus.ForeColor = Color.FromArgb(16, 35, 63);
+            lblStatus.ForeColor = DesignSystem.Navy;
 
             // Vyčistíme staré nálezy a naplníme seznam pouze výchozími offline nálezy před novou AI kontrolou
-            NaplnNalezy(_offlineNalezy, isAi: false);
+            NaplnNalezy(_offlineFindings, isAi: false);
             _cts = new CancellationTokenSource();
 
             try
             {
-                var aiNalezy = await GeminiService.AnalyzujKonzistenciAsync(_apiKey, _model, _projekt, _cts.Token);
+                var aiFindings = await GeminiService.AnalyzeConsistencyAsync(_apiKey, _model, _project, _cts.Token);
                 if (this.IsDisposed || !this.Created) return;
                 
-                if (aiNalezy.Count == 0)
+                if (aiFindings.Count == 0)
                 {
                     lblStatus.Text = "Gemini AI nenašla žádné další logické rozpory ani bezpečnostní díry. Skvělá práce!";
-                    lblStatus.ForeColor = Color.Green;
+                    lblStatus.ForeColor = DesignSystem.Zelena;
                 }
                 else
                 {
-                    NaplnNalezy(aiNalezy, isAi: true);
-                    lblStatus.Text = $"Analýza dokončena. Nalezeno {aiNalezy.Count} nových AI podnětů.";
-                    lblStatus.ForeColor = Color.Green;
+                    NaplnNalezy(aiFindings, isAi: true);
+                    lblStatus.Text = $"Analýza dokončena. Nalezeno {aiFindings.Count} nových AI podnětů.";
+                    lblStatus.ForeColor = DesignSystem.Zelena;
                 }
             }
             catch (Exception ex)
@@ -203,12 +201,12 @@ namespace CodePlanner
                 if (ex is OperationCanceledException || ex.InnerException is OperationCanceledException)
                 {
                     lblStatus.Text = "Analýza zrušena uživatelem.";
-                    lblStatus.ForeColor = Color.FromArgb(16, 35, 63);
+                    lblStatus.ForeColor = DesignSystem.Navy;
                     return;
                 }
                 MessageBox.Show(this, "AI analýza selhala:\n\n" + ex.Message, "Chyba AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 lblStatus.Text = "Během AI analýzy došlo k chybě.";
-                lblStatus.ForeColor = Color.Red;
+                lblStatus.ForeColor = DesignSystem.Cervena;
             }
             finally
             {

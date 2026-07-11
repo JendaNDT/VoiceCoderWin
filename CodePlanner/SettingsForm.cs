@@ -7,13 +7,7 @@ namespace CodePlanner
 {
     public class SettingsForm : Form
     {
-        private static readonly Color Navy = Color.FromArgb(16, 35, 63);
-        private static readonly Color Teal = Color.FromArgb(23, 176, 160);
-        private static readonly Color TealSvetla = Color.FromArgb(224, 244, 241);
-        private static readonly Color SvetlePozadi = Color.FromArgb(246, 248, 250);
-        private static readonly Color SedaText = Color.FromArgb(105, 105, 105);
-
-        private readonly GeminiNastaveni _nastaveni;
+        private readonly GeminiSettings _settings;
         private TextBox txtApiKey;
         private ComboBox cbModel;
         private CheckBox chkZobrazitKlic;
@@ -30,7 +24,7 @@ namespace CodePlanner
             }
             catch { }
 
-            _nastaveni = GeminiNastaveni.Nacti();
+            _settings = GeminiSettings.Load();
 
             ClientSize = new Size(500, 275);
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
@@ -40,24 +34,12 @@ namespace CodePlanner
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             Text = "Nastavení Gemini API";
-            Font = new Font("Segoe UI", 9.75f);
-            BackColor = SvetlePozadi;
-            ForeColor = Navy;
+            Font = DesignSystem.Body;
+            BackColor = DesignSystem.SvetlePozadi;
+            ForeColor = DesignSystem.Navy;
 
             PostavUI();
             NactiHodnoty();
-
-            this.FormClosing += (s, e) =>
-            {
-                this.Font?.Dispose();
-                txtApiKey?.Font?.Dispose();
-                cbModel?.Font?.Dispose();
-                chkZobrazitKlic?.Font?.Dispose();
-                lnkGetApiKey?.Font?.Dispose();
-                btnUlozit?.Font?.Dispose();
-                btnStorno?.Font?.Dispose();
-                btnTest?.Font?.Dispose();
-            };
         }
 
         private void PostavUI()
@@ -81,7 +63,7 @@ namespace CodePlanner
             {
                 Text = "API Klíč pro Gemini (lze nastavit i přes proměnnou GEMINI_API_KEY):",
                 AutoSize = true,
-                Font = new Font("Segoe UI Semibold", 9.75f),
+                Font = DesignSystem.BodyBold,
                 Margin = new Padding(0, 0, 0, 4)
             };
 
@@ -89,7 +71,8 @@ namespace CodePlanner
             {
                 Dock = DockStyle.Fill,
                 UseSystemPasswordChar = true,
-                Margin = new Padding(0, 0, 0, 4)
+                Margin = new Padding(0, 0, 0, 4),
+                Font = DesignSystem.Body
             };
 
             var pnlKeyHelper = new FlowLayoutPanel
@@ -105,8 +88,8 @@ namespace CodePlanner
             {
                 Text = "Zobrazit klíč",
                 AutoSize = true,
-                Font = new Font("Segoe UI", 8.5f),
-                ForeColor = SedaText,
+                Font = DesignSystem.Small,
+                ForeColor = DesignSystem.SedaText,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 2, 12, 0)
             };
@@ -118,8 +101,8 @@ namespace CodePlanner
             lnkGetApiKey = new LinkLabel
             {
                 Text = "Získat API klíč v Google AI Studio",
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Underline),
-                LinkColor = Teal,
+                Font = DesignSystem.SmallUnderline,
+                LinkColor = DesignSystem.Teal,
                 ActiveLinkColor = Color.FromArgb(19, 150, 137),
                 AutoSize = true,
                 Cursor = Cursors.Hand,
@@ -144,7 +127,7 @@ namespace CodePlanner
             {
                 Text = "Model Gemini:",
                 AutoSize = true,
-                Font = new Font("Segoe UI Semibold", 9.75f),
+                Font = DesignSystem.BodyBold,
                 Margin = new Padding(0, 0, 0, 4)
             };
 
@@ -152,7 +135,8 @@ namespace CodePlanner
             {
                 Dock = DockStyle.Fill,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Margin = new Padding(0, 0, 0, 20)
+                Margin = new Padding(0, 0, 0, 20),
+                Font = DesignSystem.Body
             };
             cbModel.Items.Add("gemini-2.5-flash");
             cbModel.Items.Add("gemini-2.5-pro");
@@ -175,22 +159,24 @@ namespace CodePlanner
                 DialogResult = DialogResult.Cancel,
                 Size = new Size(90, 30),
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Navy,
+                ForeColor = DesignSystem.Navy,
                 Cursor = Cursors.Hand,
-                Margin = new Padding(8, 0, 0, 0)
+                Margin = new Padding(8, 0, 0, 0),
+                Font = DesignSystem.Body
             };
-            btnStorno.FlatAppearance.BorderColor = Teal;
-            btnStorno.FlatAppearance.MouseOverBackColor = TealSvetla;
+            btnStorno.FlatAppearance.BorderColor = DesignSystem.Teal;
+            btnStorno.FlatAppearance.MouseOverBackColor = DesignSystem.TealSvetla;
 
             btnUlozit = new Button
             {
                 Text = "Uložit",
                 Size = new Size(90, 30),
-                BackColor = Teal,
+                BackColor = DesignSystem.Teal,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Margin = new Padding(8, 0, 0, 0)
+                Margin = new Padding(8, 0, 0, 0),
+                Font = DesignSystem.BodyBold
             };
             btnUlozit.FlatAppearance.BorderSize = 0;
             btnUlozit.FlatAppearance.MouseOverBackColor = Color.FromArgb(19, 150, 137);
@@ -201,9 +187,10 @@ namespace CodePlanner
                 Text = "🧪 Test připojení",
                 Size = new Size(130, 30),
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Navy,
+                ForeColor = DesignSystem.Navy,
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0)
+                Margin = new Padding(0),
+                Font = DesignSystem.Body
             };
             btnTest.FlatAppearance.BorderColor = Color.Silver;
             btnTest.FlatAppearance.MouseOverBackColor = Color.FromArgb(235, 238, 242);
@@ -231,28 +218,28 @@ namespace CodePlanner
 
         private void NactiHodnoty()
         {
-            txtApiKey.Text = _nastaveni.GeminiApiKey;
+            txtApiKey.Text = _settings.GeminiApiKey;
             
-            int idx = cbModel.Items.IndexOf(_nastaveni.GeminiModel);
+            int idx = cbModel.Items.IndexOf(_settings.GeminiModel);
             if (idx >= 0)
             {
                 cbModel.SelectedIndex = idx;
             }
             else
             {
-                cbModel.Items.Add(_nastaveni.GeminiModel);
+                cbModel.Items.Add(_settings.GeminiModel);
                 cbModel.SelectedIndex = cbModel.Items.Count - 1;
             }
         }
 
         private void BtnUlozit_Click(object sender, EventArgs e)
         {
-            _nastaveni.GeminiApiKey = txtApiKey.Text.Trim();
-            _nastaveni.GeminiModel = cbModel.SelectedItem.ToString();
+            _settings.GeminiApiKey = txtApiKey.Text.Trim();
+            _settings.GeminiModel = cbModel.SelectedItem.ToString();
 
             try
             {
-                _nastaveni.Uloz();
+                _settings.Save();
                 DialogResult = DialogResult.OK;
                 Close();
             }
@@ -280,7 +267,7 @@ namespace CodePlanner
 
             try
             {
-                await GeminiService.TestPripojeniAsync(testKey, testModel);
+                await GeminiService.TestConnectionAsync(testKey, testModel);
                 MessageBox.Show(this, "Připojení k Gemini API bylo úspěšně ověřeno. Váš API klíč je platný!", "Test úspěšný", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
