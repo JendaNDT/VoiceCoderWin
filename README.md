@@ -16,6 +16,14 @@ Demonstrátor projektu **VoiceCoder AI** – první krok podle kap. 18 návrhu
 - Export **Markdown** (pro člověka) a **JSON** (stabilní struktura pro agenta)
 - Ukládání projektu jako `.vcbrief`
 
+## Novinky ve v0.2
+
+- Formátovaný náhled specifikace (nadpisy, odrážky, oranžově zvýrazněné **[PŘEDPOKLAD]**)
+- Barevné stavy otázek (✔ zodpovězeno, ≈ předpoklad, ○ čeká) a štítek dopadu V/S
+- Progress bar postupu
+- Klávesové zkratky: Ctrl+N/O/S, Ctrl+M (export MD), Ctrl+J (export JSON), Ctrl+Enter (uložit odpověď)
+- Hvězdička v titulku při neuložených změnách, roztahovatelný log, ostřejší DPI (PerMonitorV2)
+
 ## Stažení a spuštění
 
 Hotové `VoiceCoderBrief.exe` najdeš v [Releases](../../releases). Nic se neinstaluje –

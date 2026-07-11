@@ -285,7 +285,7 @@ namespace VoiceCoderBrief.Core
             var data = new
             {
                 nastroj = "VoiceCoder Brief",
-                verzeNastroje = "0.1.0",
+                verzeNastroje = "0.2.0",
                 projekt = p.Nazev,
                 verzeSpecifikace = p.Verze,
                 vytvoreno = p.Vytvoreno,
