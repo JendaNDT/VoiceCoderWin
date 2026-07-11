@@ -9,7 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="../VoiceCoderBrief/Core/SpecCore.cs" Link="SpecCore.cs" />
+    <Compile Include="../CodePlanner/Core/SpecCore.cs" Link="SpecCore.cs" />
+    <Compile Include="../CodePlanner/Core/GeminiService.cs" Link="GeminiService.cs" />
   </ItemGroup>
 
 </Project>
